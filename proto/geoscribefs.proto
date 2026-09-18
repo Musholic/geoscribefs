@@ -1,0 +1,12 @@
+syntax = "proto3";
+package geoscribefs;
+
+service GeoScribeFs {
+  rpc GetStatus (Empty) returns (Response);
+}
+
+message Empty {}
+
+message Response {
+  string message = 1;
+}

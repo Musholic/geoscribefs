@@ -1,0 +1,13 @@
+[package]
+name = "geoscribefs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+clap = { version = "4.0", features = ["derive", "env"] }
+tokio = { version = "1.0", features = ["full"] }
+
+[build-dependencies]
+tonic-build = "0.12"
