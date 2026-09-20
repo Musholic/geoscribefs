@@ -1,8 +1,5 @@
 use clap::{Parser, Subcommand};
-use geoscribefs::{DEFAULT_ADDR, TOKEN_ENV_VAR};
-
-mod client;
-mod server;
+use geoscribefs::{DEFAULT_ADDR, TOKEN_ENV_VAR, server, client};
 
 #[derive(Parser)]
 struct Cli {
@@ -16,9 +13,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Start,
+    Start {
+        #[arg(long)]
+        peers: Vec<String>,
+    },
     Status,
-    Stop,
+    Write {
+        #[arg(long)]
+        volume: String,
+    },
 }
 
 #[tokio::main]
@@ -27,14 +30,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = cli.addr;
 
     match cli.command {
-        Commands::Start => {
-            server::run_server(&addr, cli.token.clone()).await?;
+        Commands::Start { peers } => {
+            server::run_server(&addr, cli.token.clone(), peers).await?;
         }
         Commands::Status => {
-            client::run_client(&addr, "status", cli.token.clone()).await?;
+            let result = client::run_client(&addr, client::ClientCommand::Status, cli.token.clone(), None).await?;
+            println!("{}", result);
         }
-        Commands::Stop => {
-            client::run_client(&addr, "stop", cli.token.clone()).await?;
+        Commands::Write { volume } => {
+            let result = client::run_client(&addr, client::ClientCommand::Write, cli.token.clone(), Some(volume)).await?;
+            println!("{}", result);
         }
     }
 

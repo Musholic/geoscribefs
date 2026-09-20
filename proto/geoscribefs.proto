@@ -1,12 +1,30 @@
 syntax = "proto3";
 package geoscribefs;
 
-service GeoScribeFs {
-  rpc GetStatus (Empty) returns (Response);
+service GeoScribeFsService {
+  rpc Status (StatusRequest) returns (StatusResponse);
+  rpc Write (WriteRequest) returns (WriteResponse);
+  rpc AskWrite (AskWriteRequest) returns (AskWriteResponse);
 }
 
-message Empty {}
+message StatusRequest {}
 
-message Response {
-  string message = 1;
+message StatusResponse {
+  string status = 1;
+}
+
+message WriteRequest {
+  string volume_name = 1;
+}
+
+message WriteResponse {
+  bool success = 1;
+}
+
+message AskWriteRequest {
+  string volume_name = 1;
+}
+
+message AskWriteResponse {
+  bool can_write = 1;
 }
