@@ -1,84 +1,45 @@
+mod common;
+
 use geoscribefs::{
     client::{ClientCommand, run_client},
-    server::{ServerConfig, run_server},
+    server::ServerConfig,
 };
-use std::time::Duration;
-use tokio::time::sleep;
-use tonic::transport::Endpoint;
-
-async fn wait_for_server(addr: &str) {
-    let mut attempts = 0;
-    let max_attempts = 10;
-
-    while attempts < max_attempts {
-        // Attempt to connect to the address
-        if Endpoint::from_shared(format!("http://{}", addr))
-            .unwrap()
-            .connect()
-            .await
-            .is_ok()
-        {
-            return; // Server is up!
-        }
-
-        attempts += 1;
-        sleep(Duration::from_millis(100)).await;
-    }
-    panic!("Server at {} failed to start in time", addr);
-}
 
 #[cfg(test)]
 use pretty_assertions::assert_eq;
+
+use crate::common::start_server;
 
 #[tokio::test]
 async fn test_status() {
     let addr = "127.0.0.1:50051";
     let addr2 = "127.0.0.1:50052";
     let addr3 = "127.0.0.1:50053";
-    let token = "secret_token".to_string();
 
-    let token1 = token.clone();
-    tokio::spawn(async move {
-        run_server(ServerConfig {
-            addr: addr.to_string(),
-            token: token1,
-            peers: vec![addr2.to_string(), addr3.to_string()],
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    });
+    start_server(ServerConfig {
+        addr: addr.to_string(),
+        peers: vec![addr2.to_string(), addr3.to_string()],
+        ..Default::default()
+    })
+    .await;
+    start_server(ServerConfig {
+        addr: addr2.to_string(),
+        peers: vec![addr.to_string(), addr3.to_string()],
+        ..Default::default()
+    })
+    .await;
 
-    let token2 = token.clone();
-    tokio::spawn(async move {
-        run_server(ServerConfig {
-            addr: addr2.to_string(),
-            token: token2,
-            peers: vec![addr.to_string(), addr3.to_string()],
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    });
-
-    let token3 = token.clone();
-    tokio::spawn(async move {
-        run_server(ServerConfig {
-            addr: addr3.to_string(),
-            token: token3,
-            peers: vec![addr.to_string(), addr2.to_string()],
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    });
-
-    wait_for_server(addr).await;
+    start_server(ServerConfig {
+        addr: addr3.to_string(),
+        peers: vec![addr.to_string(), addr2.to_string()],
+        ..Default::default()
+    })
+    .await;
 
     run_client(
         addr.to_string(),
         ClientCommand::Write,
-        "secret_token".to_string(),
+        ServerConfig::default().token,
         Some("vol_a".to_string()),
     )
     .await
@@ -87,7 +48,7 @@ async fn test_status() {
     run_client(
         addr2.to_string(),
         ClientCommand::Write,
-        "secret_token".to_string(),
+        ServerConfig::default().token,
         Some("vol_b".to_string()),
     )
     .await
@@ -96,7 +57,7 @@ async fn test_status() {
     let result = run_client(
         addr.to_string(),
         ClientCommand::Status,
-        "secret_token".to_string(),
+        ServerConfig::default().token,
         None,
     )
     .await

@@ -1,75 +1,58 @@
+mod common;
+
+use geoscribefs::fuse::{Config, GeoScribeFs};
+use geoscribefs::server::ServerConfig;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::time::Duration;
-
-use geoscribefs::server::{ServerConfig, run_server};
+use tempfile::tempdir;
 use test_log::test;
-use tokio::time::timeout;
 
-fn start_server(volume_path: String, token: String) {
-    tokio::spawn(async {
-        let _ = run_server(ServerConfig {
-            addr: "127.0.0.1:50051".to_string(),
-            token,
-            volumes: vec![volume_path],
-            ..Default::default()
-        })
-        .await;
-    });
-}
+use crate::common::{is_fuse_mounted, start_server, wait_for_fuse_mount};
 
-fn is_fuse_mounted(path: &std::path::Path) -> bool {
-    if let Ok(mounts) = fs::read_to_string("/proc/mounts") {
-        for line in mounts.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3
-                && parts[1] == path.to_str().unwrap_or("")
-                && parts[0] == "geoscribefs"
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
+#[test(tokio::test)]
+async fn test_mount_volume_and_read() {
+    let dir = tempdir().expect("Failed to create temp dir");
+    let volume_path = dir.path().to_str().unwrap().to_string();
 
-async fn wait_for_fuse_mount(path: &std::path::Path) {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if is_fuse_mounted(path) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("Fuse mount should have been created")
+    // Create hello.txt with content "Hello"
+    let hello_path = dir.path().join("hello.txt");
+    std::fs::write(&hello_path, "Hello").expect("Failed to write hello.txt");
+
+    let cfg = Config {
+        volume: volume_path,
+        token: "test_token".to_string(),
+        addr: "127.0.0.1:50051".to_string(),
+    };
+
+    let fs = GeoScribeFs::new(cfg).expect("Failed to create GeoScribeFs");
+
+    let _mount = fs.start().expect("Failed to start FUSE mount");
+
+    wait_for_fuse_mount(dir.path()).await;
+
+    // Read hello.txt and verify its content
+    let content = std::fs::read_to_string(&hello_path).expect("Failed to read hello.txt");
+    assert_eq!(content, "Hello");
 }
 
 // Test writing to one file
 #[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn test_fuse_write() {
-    let token = "test_token_123";
-    let vol_name = format!(
-        "geoscribe_test_vol_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    );
+    let dir = tempdir().expect("Failed to create temp dir");
+    let volume_path = dir.path().to_str().unwrap().to_string();
 
-    let vol_path = PathBuf::from(format!("/tmp/{}", vol_name));
-    fs::create_dir_all(&vol_path).expect("Failed to create volume dir");
+    start_server(ServerConfig {
+        volumes: vec![volume_path.clone()],
+        ..Default::default()
+    })
+    .await;
 
-    start_server(vol_path.to_str().unwrap().to_string(), token.to_string());
-
-    let file_path = vol_path.join("hello.txt");
+    let file_path = dir.path().join("hello.txt");
     let content = b"Hello GeoScribe!";
 
     // Wait for the volume to be fuse mounted
-    wait_for_fuse_mount(&vol_path).await;
-    assert!(is_fuse_mounted(&vol_path), "Volume should be FUSE mounted");
+    wait_for_fuse_mount(dir.path()).await;
+    assert!(is_fuse_mounted(dir.path()), "Volume should be FUSE mounted");
 
     // Attempt to write to the volume.
     // This should trigger: open -> gRPC write request -> MNT_DETACH -> native write
@@ -97,10 +80,10 @@ async fn test_fuse_write() {
 
     // Check that the volume is no longer fuse mounted
     assert!(
-        !is_fuse_mounted(&vol_path),
+        !is_fuse_mounted(dir.path()),
         "Volume should be unmounted after write"
     );
 
     // Cleanup
-    fs::remove_dir_all(&vol_path).ok();
+    fs::remove_dir_all(dir.path()).ok();
 }

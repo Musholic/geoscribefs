@@ -21,6 +21,7 @@ pub async fn run_client(
     let channel =
         tonic::transport::Endpoint::from_shared(format!("http://{}", addr))?.connect_lazy();
 
+    #[allow(clippy::result_large_err)]
     let mut client =
         GeoScribeFsServiceClient::with_interceptor(channel, move |mut req: Request<()>| {
             req.metadata_mut()

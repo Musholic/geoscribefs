@@ -57,9 +57,7 @@ impl GeoScribeFsService for MyGeoScribeFsService {
             status.push_str(&format!("- {}: {}\n", k, v));
         }
 
-        Ok(Response::new(StatusResponse {
-            status: status.into(),
-        }))
+        Ok(Response::new(StatusResponse { status }))
     }
 
     async fn write(
@@ -80,6 +78,8 @@ impl GeoScribeFsService for MyGeoScribeFsService {
                 })?;
 
             let token = self.token.clone();
+
+            #[allow(clippy::result_large_err)]
             let mut client =
                 GeoScribeFsServiceClient::with_interceptor(channel, move |mut req: Request<()>| {
                     let token_val = token
