@@ -1,21 +1,42 @@
-use std::{collections::BTreeMap, sync::RwLock};
+use std::{collections::BTreeMap, net::SocketAddr, sync::RwLock};
 
-use crate::proto::{
-    AskWriteRequest, AskWriteResponse, StatusRequest, StatusResponse, WriteRequest, WriteResponse, geo_scribe_fs_service_client::GeoScribeFsServiceClient, geo_scribe_fs_service_server::{GeoScribeFsService, GeoScribeFsServiceServer},
+use crate::{
+    fuse::{self, GeoScribeFs},
+    proto::{
+        AskWriteRequest, AskWriteResponse, StatusRequest, StatusResponse, WriteRequest,
+        WriteResponse,
+        geo_scribe_fs_service_client::GeoScribeFsServiceClient,
+        geo_scribe_fs_service_server::{GeoScribeFsService, GeoScribeFsServiceServer},
+    },
 };
 use tonic::{Request, Response, Status, service::Interceptor, transport::Server};
+use tracing::debug;
 
 #[derive(Default)]
 pub struct MyGeoScribeFsService {
     self_addr: String,
     peers: Vec<String>,
     token: String,
+    // The mounts will be cleaned up when the service is dropped
+    #[allow(unused)]
+    mounts: Vec<fuse::MountHandle>,
     volumes: RwLock<BTreeMap<String, String>>,
 }
 
 impl MyGeoScribeFsService {
-    pub async fn new(self_addr: String, peers: Vec<String>, token: String) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self { self_addr, peers, token, volumes: RwLock::new(BTreeMap::new()) })
+    pub async fn new(
+        self_addr: String,
+        peers: Vec<String>,
+        token: String,
+        mounts: Vec<fuse::MountHandle>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            self_addr,
+            peers,
+            token,
+            mounts,
+            volumes: RwLock::new(BTreeMap::new()),
+        })
     }
 }
 
@@ -28,7 +49,10 @@ impl GeoScribeFsService for MyGeoScribeFsService {
             status.push_str(&format!("- {}\n", peer));
         }
         status.push_str("Volumes:\n");
-        let volumes = self.volumes.read().map_err(|e| Status::internal(e.to_string()))?;
+        let volumes = self
+            .volumes
+            .read()
+            .map_err(|e| Status::internal(e.to_string()))?;
         for (k, v) in volumes.iter() {
             status.push_str(&format!("- {}: {}\n", k, v));
         }
@@ -38,53 +62,72 @@ impl GeoScribeFsService for MyGeoScribeFsService {
         }))
     }
 
-    async fn write(&self, request: Request<WriteRequest>) -> Result<Response<WriteResponse>, Status> {
+    async fn write(
+        &self,
+        request: Request<WriteRequest>,
+    ) -> Result<Response<WriteResponse>, Status> {
         let volume_name = request.into_inner().volume_name;
+
+        tracing::debug!("Writing to volume {}", volume_name);
 
         for peer in &self.peers {
             let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", peer))
-                            .map_err(|e| Status::internal(e.to_string()))?
-                            .connect()
-                            .await
-                            .map_err(|e| Status::internal(format!("Failed to connect to peer {}: {}", peer, e)))?;
+                .map_err(|e| Status::internal(e.to_string()))?
+                .connect()
+                .await
+                .map_err(|e| {
+                    Status::internal(format!("Failed to connect to peer {}: {}", peer, e))
+                })?;
 
             let token = self.token.clone();
-            let mut client = GeoScribeFsServiceClient::with_interceptor(channel, move |mut req: Request<()>| {
-                if let Ok(val) = token.parse() {
-                    req.metadata_mut().insert("authorization", val);
-                } else {
-                    eprintln!("Failed to parse authorization token");
-                }
-                if let Ok(val) = self.self_addr.parse() {
-                    req.metadata_mut().insert("address", val);
-                } else {
-                    eprintln!("Failed to parse self address");
-                }
-                Ok(req)
-            });
+            let mut client =
+                GeoScribeFsServiceClient::with_interceptor(channel, move |mut req: Request<()>| {
+                    let token_val = token
+                        .parse()
+                        .map_err(|_| Status::internal("Failed to parse authorization token"))?;
+                    let addr_val = self
+                        .self_addr
+                        .parse()
+                        .map_err(|_| Status::internal("Failed to parse self address"))?;
+
+                    req.metadata_mut().insert("authorization", token_val);
+                    req.metadata_mut().insert("address", addr_val);
+                    Ok(req)
+                });
 
             let ask_request = tonic::Request::new(AskWriteRequest {
                 volume_name: volume_name.clone(),
             });
 
-            let response = client.ask_write(ask_request).await
+            let response = client
+                .ask_write(ask_request)
+                .await
                 .map_err(|e| Status::internal(format!("Peer {} error: {}", peer, e)))?;
 
             if !response.into_inner().can_write {
-                return Err(Status::already_exists(format!("Peer {} denied write for volume {}", peer, volume_name)));
+                return Err(Status::already_exists(format!(
+                    "Peer {} denied write for volume {}",
+                    peer, volume_name
+                )));
             }
         }
-        self.volumes.write()
+
+        tracing::debug!("Volume {} can be written to", volume_name);
+        self.volumes
+            .write()
             .map_err(|e| Status::internal(e.to_string()))?
             .insert(volume_name, self.self_addr.clone());
 
-        Ok(Response::new(WriteResponse {
-            success: true,
-        }))
+        Ok(Response::new(WriteResponse { success: true }))
     }
 
-    async fn ask_write(&self, request: Request<AskWriteRequest>) -> Result<Response<AskWriteResponse>, Status> {
-        let remote_addr = request.metadata().get("address")
+    async fn ask_write(
+        &self,
+        request: Request<AskWriteRequest>,
+    ) -> Result<Response<AskWriteResponse>, Status> {
+        let remote_addr = request
+            .metadata()
+            .get("address")
             .ok_or_else(|| Status::internal("No remote address"))?
             .to_str()
             .map_err(|_| Status::internal("Invalid remote address"))?
@@ -92,13 +135,12 @@ impl GeoScribeFsService for MyGeoScribeFsService {
 
         let volume_name = request.into_inner().volume_name;
 
-        self.volumes.write()
+        self.volumes
+            .write()
             .map_err(|e| Status::internal(e.to_string()))?
             .insert(volume_name, remote_addr);
 
-        Ok(Response::new(AskWriteResponse {
-            can_write: true,
-        }))
+        Ok(Response::new(AskWriteResponse { can_write: true }))
     }
 }
 
@@ -116,14 +158,64 @@ impl Interceptor for AuthInterceptor {
     }
 }
 
-pub async fn run_server(addr: &str, token: String, peers: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let service = MyGeoScribeFsService::new(addr.to_string(), peers, token.clone()).await?;
-    let interceptor = AuthInterceptor { token };
+pub struct ServerConfig {
+    pub addr: String,
+    pub token: String,
+    pub peers: Vec<String>,
+    pub volumes: Vec<String>,
+}
 
-    println!("Starting gRPC daemon on {}...", addr);
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            addr: "127.0.0.1:50051".to_string(),
+            token: "default-token".to_string(),
+            peers: vec![],
+            volumes: vec![],
+        }
+    }
+}
+
+pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let mut mounts = Vec::new();
+    for volume in &config.volumes {
+        let volume = volume.clone();
+        let addr = config.addr.clone();
+        let token = config.token.clone();
+        debug!(
+            "Mounting volume {} at address {} with token {}",
+            volume, addr, token
+        );
+
+        let cfg = fuse::Config {
+            volume: volume.clone(),
+            token: token.clone(),
+            addr: addr.clone(),
+        };
+
+        mounts.push(GeoScribeFs::new(cfg)?.start()?);
+    }
+
+    let socket_addr: SocketAddr = config.addr.parse()?;
+    debug!("Starting gRPC daemon on {}", socket_addr);
+
+    let service = MyGeoScribeFsService::new(
+        config.addr.clone(),
+        config.peers.clone(),
+        config.token.clone(),
+        mounts,
+    )
+    .await?;
+    let interceptor = AuthInterceptor {
+        token: config.token.clone(),
+    };
+
     Server::builder()
-        .add_service(GeoScribeFsServiceServer::with_interceptor(service, interceptor))
-        .serve(addr.parse()?)
+        .add_service(GeoScribeFsServiceServer::with_interceptor(
+            service,
+            interceptor,
+        ))
+        .serve(socket_addr)
         .await?;
     Ok(())
 }

@@ -1,0 +1,3 @@
+# Allow tests using mounts without root privileges
+[target.'cfg(target_os = "linux")']
+runner = ["unshare", "-r", "-U", "-m"]

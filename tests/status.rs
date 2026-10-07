@@ -1,4 +1,7 @@
-use geoscribefs::{client::{ClientCommand, run_client}, server::run_server};
+use geoscribefs::{
+    client::{ClientCommand, run_client},
+    server::{ServerConfig, run_server},
+};
 use std::time::Duration;
 use tokio::time::sleep;
 use tonic::transport::Endpoint;
@@ -25,7 +28,7 @@ async fn wait_for_server(addr: &str) {
 }
 
 #[cfg(test)]
-use pretty_assertions::{assert_eq};
+use pretty_assertions::assert_eq;
 
 #[tokio::test]
 async fn test_status() {
@@ -36,25 +39,69 @@ async fn test_status() {
 
     let token1 = token.clone();
     tokio::spawn(async move {
-        run_server(addr, token1, vec![addr2.to_string(), addr3.to_string()]).await.unwrap();
+        run_server(ServerConfig {
+            addr: addr.to_string(),
+            token: token1,
+            peers: vec![addr2.to_string(), addr3.to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     });
 
     let token2 = token.clone();
     tokio::spawn(async move {
-        run_server(addr2, token2, vec![addr.to_string(), addr3.to_string()]).await.unwrap();
+        run_server(ServerConfig {
+            addr: addr2.to_string(),
+            token: token2,
+            peers: vec![addr.to_string(), addr3.to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     });
 
     let token3 = token.clone();
     tokio::spawn(async move {
-        run_server(addr3, token3, vec![addr.to_string(), addr2.to_string()]).await.unwrap();
+        run_server(ServerConfig {
+            addr: addr3.to_string(),
+            token: token3,
+            peers: vec![addr.to_string(), addr2.to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     });
 
     wait_for_server(addr).await;
 
-    run_client(addr, ClientCommand::Write, "secret_token".to_string(), Some("vol_a".to_string())).await.unwrap();
-    run_client("127.0.0.1:50052", ClientCommand::Write, "secret_token".to_string(), Some("vol_b".to_string())).await.unwrap();
+    run_client(
+        addr.to_string(),
+        ClientCommand::Write,
+        "secret_token".to_string(),
+        Some("vol_a".to_string()),
+    )
+    .await
+    .unwrap();
 
-    let result = run_client(addr, ClientCommand::Status, "secret_token".to_string(), None).await.unwrap();
+    run_client(
+        addr2.to_string(),
+        ClientCommand::Write,
+        "secret_token".to_string(),
+        Some("vol_b".to_string()),
+    )
+    .await
+    .unwrap();
+
+    let result = run_client(
+        addr.to_string(),
+        ClientCommand::Status,
+        "secret_token".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
     let expected = "\
 Addr: 127.0.0.1:50051
 Connected to:
