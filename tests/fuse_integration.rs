@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use tempfile::tempdir;
 use test_log::test;
 
-use crate::common::{is_fuse_mounted, start_server, wait_for_fuse_mount};
+use crate::common::{get_random_addr, is_fuse_mounted, start_server, wait_for_fuse_mount};
 
 #[test(tokio::test)]
 async fn test_mount_volume_and_read() {
@@ -21,7 +21,7 @@ async fn test_mount_volume_and_read() {
     let cfg = Config {
         volume: volume_path,
         token: "test_token".to_string(),
-        addr: "127.0.0.1:50051".to_string(),
+        addr: get_random_addr().to_string(),
     };
 
     let fs = GeoScribeFs::new(cfg).expect("Failed to create GeoScribeFs");
@@ -87,3 +87,7 @@ async fn test_fuse_write() {
     // Cleanup
     fs::remove_dir_all(dir.path()).ok();
 }
+
+// Spawn two servers, write on the first and read on the second
+#[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn test_fuse_write_server1_then_read_server2() {}

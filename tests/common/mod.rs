@@ -65,3 +65,10 @@ pub async fn wait_for_server(addr: &str) {
     }
     panic!("Server at {} failed to start in time", addr);
 }
+
+pub fn get_random_addr() -> String {
+    // Bind to port 0 to let the OS assign a random available port
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    format!("127.0.0.1:{}", port)
+}
