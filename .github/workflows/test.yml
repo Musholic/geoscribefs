@@ -5,6 +5,10 @@ on:
     branches: [master]
   pull_request:
 
+permissions:
+  checks: write
+  pull-requests: write
+
 jobs:
   # Run tests in a Dev Container
   test:
@@ -16,4 +20,10 @@ jobs:
       - name: Run tests in Dev Container
         uses: devcontainers/ci@v0.3
         with:
-          runCmd: cargo test
+          runCmd: cargo nextest run --profile ci
+
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v6
+        if: success() || failure()
+        with:
+          report_paths: "target/nextest/ci/junit.xml"

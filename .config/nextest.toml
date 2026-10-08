@@ -1,0 +1,7 @@
+[profile.ci]
+# Don't fail fast in CI to run the full test suite.
+fail-fast = false
+slow-timeout = { period = "5s", terminate-after = 4 }
+
+[profile.ci.junit]
+path = 'junit.xml'
