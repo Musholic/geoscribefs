@@ -1,0 +1,10 @@
+{
+  "name": "Rust Dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+  },
+  "privileged": true,
+
+  // Run as root inside the container so tests can run privileged tools like btrfs send/receive
+  "remoteUser": "root",
+}
