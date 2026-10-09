@@ -18,8 +18,7 @@ pub struct MyGeoScribeFsService {
     peers: Vec<String>,
     token: String,
     // The mounts will be cleaned up when the service is dropped
-    #[allow(unused)]
-    mounts: Vec<fuse::MountHandle>,
+    _mounts: Vec<fuse::MountHandle>,
     volumes: RwLock<BTreeMap<String, String>>,
 }
 
@@ -34,7 +33,7 @@ impl MyGeoScribeFsService {
             self_addr,
             peers,
             token,
-            mounts,
+            _mounts: mounts,
             volumes: RwLock::new(BTreeMap::new()),
         })
     }
