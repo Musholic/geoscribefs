@@ -1,3 +1,6 @@
+// Test utilities are not meant to be used by all tests
+#![allow(dead_code)]
+
 use std::fs;
 use std::time::Duration;
 
