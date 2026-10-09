@@ -8,13 +8,13 @@ use geoscribefs::{
 #[cfg(test)]
 use pretty_assertions::assert_eq;
 
-use crate::common::start_server;
+use crate::common::{get_random_addr, start_server};
 
 #[tokio::test]
 async fn test_status() {
-    let addr = "127.0.0.1:50051";
-    let addr2 = "127.0.0.1:50052";
-    let addr3 = "127.0.0.1:50053";
+    let addr = get_random_addr();
+    let addr2 = get_random_addr();
+    let addr3 = get_random_addr();
 
     start_server(ServerConfig {
         addr: addr.to_string(),
@@ -63,14 +63,14 @@ async fn test_status() {
     .await
     .unwrap();
 
-    let expected = "\
-Addr: 127.0.0.1:50051
-Connected to:
-- 127.0.0.1:50052
-- 127.0.0.1:50053
+    let expected = format!(
+        "Addr: {addr}\n\
+Connected to:\n\
+- {addr2}\n\
+- {addr3}\n\
 Volumes:
-- vol_a: 127.0.0.1:50051
-- vol_b: 127.0.0.1:50052
-";
+- vol_a: {addr}\n\
+- vol_b: {addr2}\n"
+    );
     assert_eq!(result, expected);
 }

@@ -1,3 +1,6 @@
+// Test utilities are not meant to be used by all tests
+#![allow(dead_code)]
+
 use std::fs;
 use std::time::Duration;
 
@@ -64,4 +67,11 @@ pub async fn wait_for_server(addr: &str) {
         sleep(Duration::from_millis(100)).await;
     }
     panic!("Server at {} failed to start in time", addr);
+}
+
+pub fn get_random_addr() -> String {
+    // Bind to port 0 to let the OS assign a random available port
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    format!("127.0.0.1:{}", port)
 }
