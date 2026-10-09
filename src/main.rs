@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use geoscribefs::{DEFAULT_ADDR, TOKEN_ENV_VAR, client, server};
+use geoscribefs::{DEFAULT_ADDR, TOKEN_ENV_VAR, client::GeoScribeClient, server};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -19,7 +19,9 @@ enum Commands {
         #[arg(long)]
         peers: Vec<String>,
         #[arg(long)]
-        volumes: Vec<String>,
+        base_volumes_path: String,
+        #[arg(long)]
+        volume_names: Vec<String>,
     },
     Status,
     Write {
@@ -41,23 +43,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = cli.token;
 
     match cli.command {
-        Commands::Start { peers, volumes } => {
+        Commands::Start {
+            peers,
+            base_volumes_path,
+            volume_names,
+        } => {
             server::run_server(server::ServerConfig {
                 addr,
                 token,
                 peers,
-                volumes,
+                base_volumes_path,
+                volume_names,
             })
             .await?;
         }
         Commands::Status => {
-            let result =
-                client::run_client(addr, client::ClientCommand::Status, token, None).await?;
+            let mut client = GeoScribeClient::connect(addr, token).await?;
+            let result = client.status().await?;
             println!("{}", result);
         }
         Commands::Write { volume } => {
-            let result =
-                client::run_client(addr, client::ClientCommand::Write, token, Some(volume)).await?;
+            let mut client = GeoScribeClient::connect(addr, token).await?;
+            let result = client.write(volume).await?;
             println!("{}", result);
         }
     }

@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, net::SocketAddr, sync::RwLock};
 use crate::{
     fuse::{self, GeoScribeFs},
     proto::{
-        AskWriteRequest, AskWriteResponse, StatusRequest, StatusResponse, WriteRequest,
-        WriteResponse,
+        AskWriteRequest, AskWriteResponse, RestoreRequest, RestoreResponse, SnapshotRequest,
+        SnapshotResponse, StatusRequest, StatusResponse, WriteRequest, WriteResponse,
         geo_scribe_fs_service_client::GeoScribeFsServiceClient,
         geo_scribe_fs_service_server::{GeoScribeFsService, GeoScribeFsServiceServer},
     },
@@ -19,6 +19,7 @@ pub struct MyGeoScribeFsService {
     token: String,
     // The mounts will be cleaned up when the service is dropped
     _mounts: Vec<fuse::MountHandle>,
+    base_volumes_path: String,
     volumes: RwLock<BTreeMap<String, String>>,
 }
 
@@ -27,6 +28,7 @@ impl MyGeoScribeFsService {
         self_addr: String,
         peers: Vec<String>,
         token: String,
+        base_volumes_path: String,
         mounts: Vec<fuse::MountHandle>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
@@ -34,6 +36,7 @@ impl MyGeoScribeFsService {
             peers,
             token,
             _mounts: mounts,
+            base_volumes_path,
             volumes: RwLock::new(BTreeMap::new()),
         })
     }
@@ -141,6 +144,85 @@ impl GeoScribeFsService for MyGeoScribeFsService {
 
         Ok(Response::new(AskWriteResponse { can_write: true }))
     }
+
+    async fn snapshot(
+        &self,
+        request: Request<SnapshotRequest>,
+    ) -> Result<Response<SnapshotResponse>, Status> {
+        let volume_name = request.into_inner().volume_name;
+        let now = chrono::Utc::now()
+            .format("%Y-%m-%d_%H-%M-%S%.3f")
+            .to_string();
+        let snapshot_name = format!("{}_{}", volume_name, now);
+        let base_volumes_path = std::path::Path::new(&self.base_volumes_path);
+        let volume_path = base_volumes_path
+            .join(&volume_name)
+            .to_string_lossy()
+            .into_owned();
+        let snapshot_path = base_volumes_path
+            .join(&snapshot_name)
+            .to_string_lossy()
+            .into_owned();
+
+        tracing::trace!("Snapshotting volume: {} to {}", volume_path, snapshot_path);
+        let status = std::process::Command::new("btrfs")
+            .args(["subvolume", "snapshot", "-r", &volume_path, &snapshot_path])
+            .status()
+            .map_err(|e| Status::internal(format!("Failed to execute btrfs command: {}", e)))?;
+
+        if status.success() {
+            Ok(Response::new(SnapshotResponse {
+                success: true,
+                date: now,
+            }))
+        } else {
+            Err(Status::internal("btrfs snapshot command failed"))
+        }
+    }
+
+    async fn restore(
+        &self,
+        request: Request<RestoreRequest>,
+    ) -> Result<Response<RestoreResponse>, Status> {
+        let request = request.into_inner();
+        let volume_name = request.volume_name;
+        let date = request.date;
+        let snapshot_name = format!("{}_{}", volume_name, date);
+        let base_volumes_path = std::path::Path::new(&self.base_volumes_path);
+        let volume_path = base_volumes_path
+            .join(&volume_name)
+            .to_string_lossy()
+            .into_owned();
+        let snapshot_path = base_volumes_path
+            .join(&snapshot_name)
+            .to_string_lossy()
+            .into_owned();
+
+        tracing::debug!("Restoring volume: {} from {}", volume_path, snapshot_path);
+
+        // To restore, we delete the existing volume and snapshot the backup back
+        let delete_status = std::process::Command::new("btrfs")
+            .args(["subvolume", "delete", &volume_path])
+            .status()
+            .map_err(|e| Status::internal(format!("Failed to execute btrfs delete: {}", e)))?;
+
+        if !delete_status.success() {
+            return Err(Status::internal(
+                "Failed to delete existing volume for restore",
+            ));
+        }
+
+        let restore_status = std::process::Command::new("btrfs")
+            .args(["subvolume", "snapshot", &snapshot_path, &volume_path])
+            .status()
+            .map_err(|e| Status::internal(format!("Failed to execute btrfs snapshot: {}", e)))?;
+
+        if restore_status.success() {
+            Ok(Response::new(RestoreResponse { success: true }))
+        } else {
+            Err(Status::internal("btrfs restore snapshot command failed"))
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -161,7 +243,8 @@ pub struct ServerConfig {
     pub addr: String,
     pub token: String,
     pub peers: Vec<String>,
-    pub volumes: Vec<String>,
+    pub base_volumes_path: String,
+    pub volume_names: Vec<String>,
 }
 
 impl Default for ServerConfig {
@@ -170,15 +253,16 @@ impl Default for ServerConfig {
             addr: "127.0.0.1:50051".to_string(),
             token: "default-token".to_string(),
             peers: vec![],
-            volumes: vec![],
+            base_volumes_path: "/var/lib/geoscribefs".to_string(),
+            volume_names: vec![],
         }
     }
 }
 
 pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::Error>> {
     let mut mounts = Vec::new();
-    for volume in &config.volumes {
-        let volume = volume.clone();
+    for volume_name in &config.volume_names {
+        let volume = config.base_volumes_path.clone() + "/" + volume_name;
         let addr = config.addr.clone();
         let token = config.token.clone();
         debug!(
@@ -187,7 +271,7 @@ pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::
         );
 
         let cfg = fuse::Config {
-            volume: volume.clone(),
+            volume,
             token: token.clone(),
             addr: addr.clone(),
         };
@@ -202,6 +286,7 @@ pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::
         config.addr.clone(),
         config.peers.clone(),
         config.token.clone(),
+        config.base_volumes_path.clone(),
         mounts,
     )
     .await?;

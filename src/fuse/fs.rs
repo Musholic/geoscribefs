@@ -14,7 +14,10 @@ use fuse_backend_rs::{
 };
 use tokio::sync::Mutex;
 
-use crate::fuse::{Config, GeoScribeFs, MountHandle, detach_mount};
+use crate::{
+    client::GeoScribeClient,
+    fuse::{Config, GeoScribeFs, MountHandle, detach_mount},
+};
 
 impl GeoScribeFs {
     pub fn new(cfg: Config) -> Result<Self> {
@@ -100,14 +103,13 @@ impl GeoScribeFs {
 
         let timeout_duration = Duration::from_secs(10);
 
-        let auth_future = crate::client::run_client(
-            self.addr.clone(),
-            crate::client::ClientCommand::Write,
-            self.token.clone(),
-            Some(self.volume_name.clone()),
-        );
+        let auth_result = tokio::time::timeout(timeout_duration, async {
+            let mut client =
+                GeoScribeClient::connect(self.addr.clone(), self.token.clone()).await?;
 
-        let auth_result = tokio::time::timeout(timeout_duration, auth_future).await?;
+            client.write(self.volume_name.clone()).await
+        })
+        .await?;
 
         if auth_result.is_err() {
             return Err(Error::from_raw_os_error(libc::EACCES));

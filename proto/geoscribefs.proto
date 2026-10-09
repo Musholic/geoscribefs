@@ -2,9 +2,11 @@ syntax = "proto3";
 package geoscribefs;
 
 service GeoScribeFsService {
-  rpc Status (StatusRequest) returns (StatusResponse);
-  rpc Write (WriteRequest) returns (WriteResponse);
-  rpc AskWrite (AskWriteRequest) returns (AskWriteResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+  rpc Write(WriteRequest) returns (WriteResponse);
+  rpc AskWrite(AskWriteRequest) returns (AskWriteResponse);
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc Restore(RestoreRequest) returns (RestoreResponse);
 }
 
 message StatusRequest {}
@@ -27,4 +29,22 @@ message AskWriteRequest {
 
 message AskWriteResponse {
   bool can_write = 1;
+}
+
+message SnapshotRequest {
+  string volume_name = 1;
+}
+
+message SnapshotResponse {
+  bool success = 1;
+  string date = 2;
+}
+
+message RestoreRequest {
+  string volume_name = 1;
+  string date = 2;
+}
+
+message RestoreResponse {
+  bool success = 1;
 }

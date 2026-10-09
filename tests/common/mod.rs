@@ -1,8 +1,10 @@
 // Test utilities are not meant to be used by all tests
 #![allow(dead_code)]
 
-use std::fs;
+use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
+use std::{fs, path::PathBuf};
 
 use geoscribefs::server::{ServerConfig, run_server};
 use tokio::time::{sleep, timeout};
@@ -74,4 +76,42 @@ pub fn get_random_addr() -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     format!("127.0.0.1:{}", port)
+}
+
+pub struct TempSubvolume {
+    pub base_volume_path: PathBuf,
+    pub volume_path: PathBuf,
+    pub volume_name: String,
+}
+
+impl TempSubvolume {
+    pub fn create() -> Self {
+        let base_volume_path = Path::new("/var/lib/geoscribefs/btrfs");
+        let volume_name = format!(
+            "vol_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let volume_path = base_volume_path.join(&volume_name);
+        Command::new("btrfs")
+            .args(["subvolume", "create", volume_path.to_str().unwrap()])
+            .status()
+            .expect("Failed to create subvolume");
+
+        Self {
+            base_volume_path: base_volume_path.to_path_buf(),
+            volume_path,
+            volume_name,
+        }
+    }
+}
+
+impl Drop for TempSubvolume {
+    fn drop(&mut self) {
+        let _ = Command::new("btrfs")
+            .args(["subvolume", "delete", self.volume_path.to_str().unwrap()])
+            .status();
+    }
 }
