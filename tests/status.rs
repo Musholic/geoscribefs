@@ -2,7 +2,6 @@ mod common;
 
 use geoscribefs::{client::GeoScribeClient, server::ServerConfig};
 
-#[cfg(test)]
 use pretty_assertions::assert_eq;
 
 use crate::common::{get_random_addr, start_server};

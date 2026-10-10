@@ -34,6 +34,12 @@ enum Commands {
         #[arg(short, long)]
         volume: String,
     },
+    Restore {
+        #[arg(short, long)]
+        volume: String,
+        #[arg(short, long)]
+        snapshot: String,
+    },
 }
 
 pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error>> {
@@ -76,6 +82,18 @@ pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error>> {
                 ))
             } else {
                 Err("Snapshot creation failed".into())
+            }
+        }
+        Commands::Restore { volume, snapshot } => {
+            let mut client = GeoScribeClient::connect(addr, token).await?;
+            let success = client.restore(volume.clone(), snapshot.clone()).await?;
+            if success {
+                Ok(format!(
+                    "Restored {} to snapshot {} with success",
+                    volume, snapshot
+                ))
+            } else {
+                Err("Restore failed".into())
             }
         }
     }

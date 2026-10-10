@@ -112,3 +112,28 @@ async fn test_cli_status() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(result, "status");
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn test_cli_restore() -> Result<(), Box<dyn std::error::Error>> {
+    let addr = start_mock_server();
+    let cli = Cli::try_parse_from(vec![
+        "geoscribefs",
+        "--addr",
+        &addr,
+        "--token",
+        "dummy",
+        "restore",
+        "-v",
+        "vol_a",
+        "-s",
+        "2026-10-10_14-53-11.580",
+    ])
+    .map_err(|e| e.to_string())?;
+
+    let result = run_cli(cli).await?;
+    assert_eq!(
+        result,
+        "Restored vol_a to snapshot 2026-10-10_14-53-11.580 with success"
+    );
+    Ok(())
+}
