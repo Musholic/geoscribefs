@@ -7,7 +7,9 @@ use std::io::{Read, Write};
 use tempfile::tempdir;
 use test_log::test;
 
-use crate::common::{get_random_addr, is_fuse_mounted, start_server, wait_for_fuse_mount};
+use crate::common::{
+    TempSubvolume, get_random_addr, is_fuse_mounted, start_server, wait_for_fuse_mount,
+};
 
 #[test(tokio::test)]
 async fn test_mount_volume_and_read() {
@@ -38,21 +40,24 @@ async fn test_mount_volume_and_read() {
 // Test writing to one file
 #[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn test_fuse_write() {
-    let dir = tempdir().expect("Failed to create temp dir");
-    let volume_path = dir.path().to_str().unwrap().to_string();
+    let temp_vol = TempSubvolume::create();
 
     start_server(ServerConfig {
-        volumes: vec![volume_path.clone()],
+        base_volumes_path: temp_vol.base_volume_path.to_string_lossy().into_owned(),
+        volume_names: vec![temp_vol.volume_name.clone()],
         ..Default::default()
     })
     .await;
 
-    let file_path = dir.path().join("hello.txt");
+    let file_path = temp_vol.volume_path.join("hello.txt");
     let content = b"Hello GeoScribe!";
 
     // Wait for the volume to be fuse mounted
-    wait_for_fuse_mount(dir.path()).await;
-    assert!(is_fuse_mounted(dir.path()), "Volume should be FUSE mounted");
+    wait_for_fuse_mount(&temp_vol.volume_path).await;
+    assert!(
+        is_fuse_mounted(&temp_vol.volume_path),
+        "Volume should be FUSE mounted"
+    );
 
     // Attempt to write to the volume.
     // This should trigger: open -> gRPC write request -> MNT_DETACH -> native write
@@ -80,12 +85,9 @@ async fn test_fuse_write() {
 
     // Check that the volume is no longer fuse mounted
     assert!(
-        !is_fuse_mounted(dir.path()),
+        !is_fuse_mounted(&temp_vol.volume_path),
         "Volume should be unmounted after write"
     );
-
-    // Cleanup
-    fs::remove_dir_all(dir.path()).ok();
 }
 
 // Spawn two servers, write on the first and read on the second

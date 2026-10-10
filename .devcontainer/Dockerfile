@@ -3,6 +3,7 @@ FROM mcr.microsoft.com/devcontainers/rust:latest
 # Install required tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     protobuf-compiler \
+    btrfs-progs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install cargo-nextest via cargo-binstall
