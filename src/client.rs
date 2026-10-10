@@ -1,5 +1,5 @@
 use crate::proto::{
-    RestoreRequest, SnapshotRequest, StatusRequest, WriteRequest,
+    ListSnapshotsRequest, RestoreRequest, SnapshotRequest, StatusRequest, WriteRequest,
     geo_scribe_fs_service_client::GeoScribeFsServiceClient,
 };
 use std::time::Duration;
@@ -91,5 +91,15 @@ impl GeoScribeClient {
             date: date.clone()
         }))?;
         Ok(res.into_inner().success)
+    }
+
+    pub async fn list_snapshots(
+        &mut self,
+        volume_name: String,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let res = with_retries!(self.inner.list_snapshots(ListSnapshotsRequest {
+            volume_name: volume_name.clone()
+        }))?;
+        Ok(res.into_inner().snapshots)
     }
 }

@@ -40,6 +40,10 @@ enum Commands {
         #[arg(short, long)]
         snapshot: String,
     },
+    ListSnapshots {
+        #[arg(short, long)]
+        volume: String,
+    },
 }
 
 pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error>> {
@@ -95,6 +99,19 @@ pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error>> {
             } else {
                 Err("Restore failed".into())
             }
+        }
+        Commands::ListSnapshots { volume } => {
+            let mut client = GeoScribeClient::connect(addr, token).await?;
+            let snapshots = client.list_snapshots(volume.clone()).await?;
+            let snapshots_list = snapshots
+                .iter()
+                .map(|s| format!("- {}", s))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(format!(
+                "List of snapshots for {}:\n{}",
+                volume, snapshots_list
+            ))
         }
     }
 }
