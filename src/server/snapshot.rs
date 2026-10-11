@@ -22,6 +22,36 @@ pub trait SnapshotHandler {
     ) -> Result<Response<ListSnapshotsResponse>, Status>;
 }
 
+fn get_volume_path(base_volumes_path: &str, volume_name: &str) -> String {
+    std::path::Path::new(base_volumes_path)
+        .join(volume_name)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn get_snapshots_dir(
+    base_volumes_path: &str,
+    volume_name: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    let snapshots_dir = std::path::Path::new(base_volumes_path)
+        .join(".snapshots")
+        .join(volume_name);
+
+    std::fs::create_dir_all(&snapshots_dir)?;
+
+    Ok(snapshots_dir)
+}
+
+fn get_snapshot_path(
+    base_volumes_path: &str,
+    volume_name: &str,
+    date: &str,
+) -> std::io::Result<String> {
+    let snapshots_dir = get_snapshots_dir(base_volumes_path, volume_name)?;
+
+    Ok(snapshots_dir.join(date).to_string_lossy().into_owned())
+}
+
 #[tonic::async_trait]
 impl SnapshotHandler for MyGeoScribeFsService {
     async fn handle_snapshot(
@@ -31,18 +61,8 @@ impl SnapshotHandler for MyGeoScribeFsService {
         let now = chrono::Utc::now()
             .format("%Y-%m-%d_%H-%M-%S%.3f")
             .to_string();
-        let base_volumes_path = std::path::Path::new(&self.base_volumes_path);
-        let volume_path = base_volumes_path
-            .join(volume_name)
-            .to_string_lossy()
-            .into_owned();
-
-        let snapshots_dir = base_volumes_path.join(".snapshots").join(volume_name);
-        std::fs::create_dir_all(&snapshots_dir).map_err(|e| {
-            Status::internal(format!("Failed to create snapshots directory: {}", e))
-        })?;
-
-        let snapshot_path = snapshots_dir.join(&now).to_string_lossy().into_owned();
+        let volume_path = get_volume_path(&self.base_volumes_path, volume_name);
+        let snapshot_path = get_snapshot_path(&self.base_volumes_path, volume_name, &now)?;
 
         tracing::trace!("Snapshotting volume: {} to {}", volume_path, snapshot_path);
         let status = std::process::Command::new("btrfs")
@@ -65,16 +85,8 @@ impl SnapshotHandler for MyGeoScribeFsService {
         volume_name: &str,
         date: &str,
     ) -> Result<Response<RestoreResponse>, Status> {
-        let snapshot_name = format!("{}_{}", volume_name, date);
-        let base_volumes_path = std::path::Path::new(&self.base_volumes_path);
-        let volume_path = base_volumes_path
-            .join(volume_name)
-            .to_string_lossy()
-            .into_owned();
-        let snapshot_path = base_volumes_path
-            .join(&snapshot_name)
-            .to_string_lossy()
-            .into_owned();
+        let volume_path = get_volume_path(&self.base_volumes_path, volume_name);
+        let snapshot_path = get_snapshot_path(&self.base_volumes_path, volume_name, date)?;
 
         tracing::debug!("Restoring volume: {} from {}", volume_path, snapshot_path);
 
@@ -106,9 +118,7 @@ impl SnapshotHandler for MyGeoScribeFsService {
         &self,
         volume_name: &str,
     ) -> Result<Response<ListSnapshotsResponse>, Status> {
-        let snapshots_dir = std::path::Path::new(&self.base_volumes_path)
-            .join(".snapshots")
-            .join(volume_name);
+        let snapshots_dir = get_snapshots_dir(&self.base_volumes_path, volume_name)?;
 
         let snapshots = std::fs::read_dir(&snapshots_dir)
             .map(|entries| {
