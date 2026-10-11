@@ -1,17 +1,13 @@
 mod common;
 
-use geoscribefs::{
-    client::{ClientCommand, run_client},
-    server::ServerConfig,
-};
+use geoscribefs::{client::GeoScribeClient, server::ServerConfig};
 
-#[cfg(test)]
 use pretty_assertions::assert_eq;
 
 use crate::common::{get_random_addr, start_server};
 
 #[tokio::test]
-async fn test_status() {
+async fn test_status() -> Result<(), Box<dyn std::error::Error>> {
     let addr = get_random_addr();
     let addr2 = get_random_addr();
     let addr3 = get_random_addr();
@@ -36,32 +32,15 @@ async fn test_status() {
     })
     .await;
 
-    run_client(
-        addr.to_string(),
-        ClientCommand::Write,
-        ServerConfig::default().token,
-        Some("vol_a".to_string()),
-    )
-    .await
-    .unwrap();
+    let mut client =
+        GeoScribeClient::connect(addr.to_string(), ServerConfig::default().token).await?;
+    client.write("vol_a".to_string()).await?;
 
-    run_client(
-        addr2.to_string(),
-        ClientCommand::Write,
-        ServerConfig::default().token,
-        Some("vol_b".to_string()),
-    )
-    .await
-    .unwrap();
+    let mut client2 =
+        GeoScribeClient::connect(addr2.to_string(), ServerConfig::default().token).await?;
+    client2.write("vol_b".to_string()).await?;
 
-    let result = run_client(
-        addr.to_string(),
-        ClientCommand::Status,
-        ServerConfig::default().token,
-        None,
-    )
-    .await
-    .unwrap();
+    let result = client.status().await?;
 
     let expected = format!(
         "Addr: {addr}\n\
@@ -73,4 +52,6 @@ Volumes:
 - vol_b: {addr2}\n"
     );
     assert_eq!(result, expected);
+
+    Ok(())
 }
