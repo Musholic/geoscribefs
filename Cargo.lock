@@ -552,6 +552,7 @@ dependencies = [
  "prost",
  "tempfile",
  "test-log",
+ "thiserror",
  "tokio",
  "tokio-uring 0.5.0",
  "tonic",
