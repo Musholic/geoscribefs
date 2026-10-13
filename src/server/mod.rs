@@ -121,8 +121,7 @@ pub struct ServerConfig {
     pub addr: String,
     pub token: String,
     pub peers: Vec<String>,
-    pub base_volumes_path: String,
-    pub volume_names: Vec<String>,
+    pub volume_paths: Vec<String>,
 }
 
 impl Default for ServerConfig {
@@ -131,26 +130,24 @@ impl Default for ServerConfig {
             addr: "127.0.0.1:50051".to_string(),
             token: "default-token".to_string(),
             peers: vec![],
-            base_volumes_path: "/var/lib/geoscribefs".to_string(),
-            volume_names: vec![],
+            volume_paths: vec![],
         }
     }
 }
 
 pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::Error>> {
     let mut volume_managers = BTreeMap::new();
-    for volume_name in &config.volume_names {
-        let volume = config.base_volumes_path.clone() + "/" + volume_name;
+    for volume_path in &config.volume_paths {
         let addr = config.addr.clone();
         let token = config.token.clone();
 
         let cfg = fuse::Config {
-            volume,
+            volume: volume_path.clone(),
             token: token.clone(),
             addr: addr.clone(),
         };
         let volume_manager = volume_manager::mount_and_get(cfg)?;
-        volume_managers.insert(volume_name.clone(), volume_manager);
+        volume_managers.insert(volume_path.clone(), volume_manager);
     }
 
     let socket_addr: SocketAddr = config.addr.parse()?;

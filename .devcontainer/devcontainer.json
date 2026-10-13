@@ -4,6 +4,7 @@
     "dockerfile": "Dockerfile",
   },
   "privileged": true,
+  "runArgs": ["--device=/dev/zfs"],
 
   // Run as root inside the container so tests can run privileged tools like btrfs send/receive
   "remoteUser": "root",

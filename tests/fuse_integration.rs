@@ -2,13 +2,15 @@ mod common;
 
 use geoscribefs::fuse::{Config, GeoScribeFs};
 use geoscribefs::server::ServerConfig;
+use geoscribefs::volume_manager::FsBackend;
+use rstest::rstest;
 use std::fs;
 use std::io::{Read, Write};
 use tempfile::tempdir;
 use test_log::test;
 
 use crate::common::{
-    TempSubvolume, get_random_addr, is_fuse_mounted, start_server, wait_for_fuse_mount,
+    get_random_addr, is_fuse_mounted, start_server, temp_volume, wait_for_fuse_mount,
 };
 
 #[test(tokio::test)]
@@ -39,23 +41,24 @@ async fn test_mount_volume_and_read() {
 
 // Test writing to one file
 #[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
-async fn test_fuse_write() {
-    let temp_vol = TempSubvolume::create();
+#[rstest]
+async fn test_fuse_write(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: FsBackend) {
+    let temp_vol = temp_volume::create_temp_volume(backend);
+    let volume_path = temp_vol.volume.path().to_string_lossy().into_owned();
 
     start_server(ServerConfig {
-        base_volumes_path: temp_vol.base_volume_path.to_string_lossy().into_owned(),
-        volume_names: vec![temp_vol.volume_name.clone()],
+        volume_paths: vec![volume_path.clone()],
         ..Default::default()
     })
     .await;
 
-    let file_path = temp_vol.volume_path.join("hello.txt");
+    let file_path = temp_vol.volume.path().join("hello.txt");
     let content = b"Hello GeoScribe!";
 
     // Wait for the volume to be fuse mounted
-    wait_for_fuse_mount(&temp_vol.volume_path).await;
+    wait_for_fuse_mount(temp_vol.volume.path()).await;
     assert!(
-        is_fuse_mounted(&temp_vol.volume_path),
+        is_fuse_mounted(temp_vol.volume.path()),
         "Volume should be FUSE mounted"
     );
 
@@ -85,7 +88,7 @@ async fn test_fuse_write() {
 
     // Check that the volume is no longer fuse mounted
     assert!(
-        !is_fuse_mounted(&temp_vol.volume_path),
+        !is_fuse_mounted(temp_vol.volume.path()),
         "Volume should be unmounted after write"
     );
 }

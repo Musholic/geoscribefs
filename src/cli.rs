@@ -21,9 +21,7 @@ enum Commands {
         #[arg(long)]
         peers: Vec<String>,
         #[arg(long)]
-        base_volumes_path: String,
-        #[arg(long)]
-        volume_names: Vec<String>,
+        volume_paths: Vec<String>,
     },
     Status,
     Write {
@@ -53,15 +51,13 @@ pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Start {
             peers,
-            base_volumes_path,
-            volume_names,
+            volume_paths,
         } => {
             server::run_server(server::ServerConfig {
                 addr,
                 token,
                 peers,
-                base_volumes_path,
-                volume_names,
+                volume_paths,
             })
             .await?;
             Ok("Server exited".to_string())
