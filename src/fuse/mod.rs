@@ -35,8 +35,9 @@ use fuse_backend_rs::passthrough::PassthroughFs;
 use nix::mount::{MntFlags, umount2};
 use tokio::sync::Mutex;
 
+/// Automatically unmounts the FUSE mount when dropped.
 pub struct MountHandle {
-    mountpoint: String,
+    pub mountpoint: String,
     thread_handle: Option<JoinHandle<Result<()>>>,
 }
 

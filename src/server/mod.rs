@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, net::SocketAddr, sync::RwLock};
 
 use crate::{
-    fuse::{self, GeoScribeFs},
+    fuse::{self},
     proto::{
         AskWriteRequest, AskWriteResponse, ListSnapshotsRequest, ListSnapshotsResponse,
         RestoreRequest, RestoreResponse, SnapshotRequest, SnapshotResponse, StatusRequest,
@@ -9,6 +9,7 @@ use crate::{
         geo_scribe_fs_service_server::{GeoScribeFsService, GeoScribeFsServiceServer},
     },
     server::{snapshot::SnapshotHandler, status::StatusHandler, write::WriteHandler},
+    volume_manager::{self, VolumeManager},
 };
 use tonic::{Request, Response, Status, service::Interceptor, transport::Server};
 use tracing::debug;
@@ -22,9 +23,7 @@ pub struct MyGeoScribeFsService {
     self_addr: String,
     peers: Vec<String>,
     token: String,
-    // The mounts will be cleaned up when the service is dropped
-    _mounts: Vec<fuse::MountHandle>,
-    base_volumes_path: String,
+    volume_managers: BTreeMap<String, Box<dyn VolumeManager>>,
     volumes: RwLock<BTreeMap<String, String>>,
 }
 
@@ -33,15 +32,13 @@ impl MyGeoScribeFsService {
         self_addr: String,
         peers: Vec<String>,
         token: String,
-        base_volumes_path: String,
-        mounts: Vec<fuse::MountHandle>,
+        volume_managers: BTreeMap<String, Box<dyn VolumeManager>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             self_addr,
             peers,
             token,
-            _mounts: mounts,
-            base_volumes_path,
+            volume_managers,
             volumes: RwLock::new(BTreeMap::new()),
         })
     }
@@ -124,8 +121,7 @@ pub struct ServerConfig {
     pub addr: String,
     pub token: String,
     pub peers: Vec<String>,
-    pub base_volumes_path: String,
-    pub volume_names: Vec<String>,
+    pub volume_paths: Vec<String>,
 }
 
 impl Default for ServerConfig {
@@ -134,30 +130,24 @@ impl Default for ServerConfig {
             addr: "127.0.0.1:50051".to_string(),
             token: "default-token".to_string(),
             peers: vec![],
-            base_volumes_path: "/var/lib/geoscribefs".to_string(),
-            volume_names: vec![],
+            volume_paths: vec![],
         }
     }
 }
 
 pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let mut mounts = Vec::new();
-    for volume_name in &config.volume_names {
-        let volume = config.base_volumes_path.clone() + "/" + volume_name;
+    let mut volume_managers = BTreeMap::new();
+    for volume_path in &config.volume_paths {
         let addr = config.addr.clone();
         let token = config.token.clone();
-        debug!(
-            "Mounting volume {} at address {} with token {}",
-            volume, addr, token
-        );
 
         let cfg = fuse::Config {
-            volume,
+            volume: volume_path.clone(),
             token: token.clone(),
             addr: addr.clone(),
         };
-
-        mounts.push(GeoScribeFs::new(cfg)?.start()?);
+        let volume_manager = volume_manager::mount_and_get(cfg)?;
+        volume_managers.insert(volume_path.clone(), volume_manager);
     }
 
     let socket_addr: SocketAddr = config.addr.parse()?;
@@ -167,8 +157,7 @@ pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::
         config.addr.clone(),
         config.peers.clone(),
         config.token.clone(),
-        config.base_volumes_path.clone(),
-        mounts,
+        volume_managers,
     )
     .await?;
     let interceptor = AuthInterceptor {
