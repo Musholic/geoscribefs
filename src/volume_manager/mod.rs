@@ -1,7 +1,7 @@
 pub mod btrfs;
 pub mod zfs;
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use nix::sys::statfs::{FsType, statfs};
 use thiserror::Error;
@@ -33,6 +33,8 @@ pub trait VolumeManager: Send + Sync {
 
     /// Lists all snapshots for the volume.
     async fn list_snapshots(&self) -> Result<Vec<String>, StorageError>;
+
+    fn volume_path(&self) -> &str;
 }
 
 #[derive(Clone, Copy)]
@@ -54,14 +56,14 @@ fn get_fs_backend(volume: &str) -> Option<FsBackend> {
     }
 }
 
-pub fn mount_and_get(cfg: fuse::Config) -> Result<Box<dyn VolumeManager>, StorageError> {
-    tracing::debug!("Mounting volume {} at address {}", cfg.volume, cfg.addr);
+pub fn mount_and_get(cfg: fuse::Config) -> Result<Arc<dyn VolumeManager>, StorageError> {
+    tracing::debug!("Mounting volume {}", cfg.volume);
     let volume = cfg.volume.clone();
 
     let mount = GeoScribeFs::new(cfg)?.start()?;
     let backend = get_fs_backend(&volume).ok_or(StorageError::FsNotSupported(volume.clone()))?;
     match backend {
-        FsBackend::Btrfs => Ok(Box::new(BtrfsVolumeManager::new(mount)?)),
-        FsBackend::Zfs => Ok(Box::new(ZfsVolumeManager::new(mount)?)),
+        FsBackend::Btrfs => Ok(Arc::new(BtrfsVolumeManager::new(mount)?)),
+        FsBackend::Zfs => Ok(Arc::new(ZfsVolumeManager::new(mount)?)),
     }
 }

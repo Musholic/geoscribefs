@@ -120,4 +120,8 @@ impl VolumeManager for ZfsVolumeManager {
 
         Ok(snapshots)
     }
+
+    fn volume_path(&self) -> &str {
+        &self.mount.mountpoint
+    }
 }

@@ -1,11 +1,12 @@
 mod common;
 
 use geoscribefs::fuse::{Config, GeoScribeFs};
-use geoscribefs::server::ServerConfig;
+use geoscribefs::server::{GeoScribeFsManager, ServerConfig};
 use geoscribefs::volume_manager::FsBackend;
 use rstest::rstest;
 use std::fs;
 use std::io::{Read, Write};
+use std::sync::Arc;
 use tempfile::tempdir;
 use test_log::test;
 
@@ -22,10 +23,15 @@ async fn test_mount_volume_and_read() {
     let hello_path = dir.path().join("hello.txt");
     std::fs::write(&hello_path, "Hello").expect("Failed to write hello.txt");
 
+    let manager = Arc::new(GeoScribeFsManager::new(
+        get_random_addr().to_string(),
+        vec![],
+        "test_token".to_string(),
+    ));
+
     let cfg = Config {
         volume: volume_path,
-        token: "test_token".to_string(),
-        addr: get_random_addr().to_string(),
+        manager: manager.clone(),
     };
 
     let fs = GeoScribeFs::new(cfg).expect("Failed to create GeoScribeFs");
@@ -95,4 +101,46 @@ async fn test_fuse_write(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: Fs
 
 // Spawn two servers, write on the first and read on the second
 #[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
-async fn test_fuse_write_server1_then_read_server2() {}
+#[rstest]
+async fn test_fuse_write_server1_then_read_server2(
+    #[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: FsBackend,
+) {
+    // Start the two servers, each with their volume of the same name
+    let addr = get_random_addr();
+    let addr2 = get_random_addr();
+
+    let temp_vol = temp_volume::create_temp_volume(backend);
+    let volume_path = temp_vol.volume.path().to_string_lossy().into_owned();
+    let temp_vol2 = temp_volume::create_temp_volume_named(backend, temp_vol.volume.volume_name());
+    let volume_path2 = temp_vol2.volume.path().to_string_lossy().into_owned();
+
+    start_server(ServerConfig {
+        addr: addr.to_string(),
+        peers: vec![addr2.to_string()],
+        volume_paths: vec![volume_path.clone()],
+        ..Default::default()
+    })
+    .await;
+    start_server(ServerConfig {
+        addr: addr2.to_string(),
+        peers: vec![addr.to_string()],
+        volume_paths: vec![volume_path2.clone()],
+        ..Default::default()
+    })
+    .await;
+
+    // Write into the first volume
+    let file_path = temp_vol.volume.path().join("hello.txt");
+    let mut file = fs::File::create(&file_path).expect("Failed to create file");
+    file.write_all(b"Hello, World!")
+        .expect("Failed to write to file");
+
+    // Read from the second volume
+    let file_path2 = temp_vol2.volume.path().join("hello.txt");
+    let mut file2 = fs::File::open(&file_path2).expect("Failed to open file");
+    let mut contents = String::new();
+    file2
+        .read_to_string(&mut contents)
+        .expect("Failed to read from file");
+    assert_eq!(contents, "Hello, World!");
+}

@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, net::SocketAddr, sync::RwLock};
+use std::{
+    collections::BTreeMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 
 use crate::{
     fuse::{self},
@@ -8,46 +12,63 @@ use crate::{
         StatusResponse, WriteRequest, WriteResponse,
         geo_scribe_fs_service_server::{GeoScribeFsService, GeoScribeFsServiceServer},
     },
-    server::{snapshot::SnapshotHandler, status::StatusHandler, write::WriteHandler},
+    server::{
+        error::FsError, snapshot::SnapshotHandler, status::StatusHandler, write::WriteHandler,
+    },
     volume_manager::{self, VolumeManager},
 };
 use tonic::{Request, Response, Status, service::Interceptor, transport::Server};
 use tracing::debug;
 
+pub mod error;
 mod snapshot;
 mod status;
-mod write;
+pub mod write;
 
-#[derive(Default)]
-pub struct MyGeoScribeFsService {
+struct MyGeoScribeFsService {
+    manager: Arc<GeoScribeFsManager>,
+}
+
+pub struct GeoScribeFsManager {
     self_addr: String,
     peers: Vec<String>,
     token: String,
-    volume_managers: BTreeMap<String, Box<dyn VolumeManager>>,
+    volume_managers: RwLock<BTreeMap<String, Arc<dyn VolumeManager>>>,
     volumes: RwLock<BTreeMap<String, String>>,
 }
 
-impl MyGeoScribeFsService {
-    pub async fn new(
-        self_addr: String,
-        peers: Vec<String>,
-        token: String,
-        volume_managers: BTreeMap<String, Box<dyn VolumeManager>>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self {
+impl GeoScribeFsManager {
+    pub fn new(self_addr: String, peers: Vec<String>, token: String) -> Self {
+        Self {
             self_addr,
             peers,
             token,
-            volume_managers,
+            volume_managers: RwLock::new(BTreeMap::new()),
             volumes: RwLock::new(BTreeMap::new()),
-        })
+        }
+    }
+
+    pub fn register_volume(&self, volume_manager: Arc<dyn VolumeManager>) {
+        let mut volume_managers = self.volume_managers.write().unwrap();
+        volume_managers.insert(volume_manager.volume_path().to_string(), volume_manager);
+    }
+
+    fn get_volume_manager(&self, volume_name: &str) -> Result<Arc<dyn VolumeManager>, FsError> {
+        let volume_managers = self
+            .volume_managers
+            .read()
+            .map_err(|e| FsError::LockPoisoned(e.to_string()))?;
+        volume_managers
+            .get(volume_name)
+            .cloned()
+            .ok_or_else(|| FsError::NotFound(volume_name.to_string()))
     }
 }
 
 #[tonic::async_trait]
 impl GeoScribeFsService for MyGeoScribeFsService {
     async fn status(&self, _: Request<StatusRequest>) -> Result<Response<StatusResponse>, Status> {
-        self.handle_status().await
+        Ok(Response::new(self.manager.handle_status().await?))
     }
 
     async fn write(
@@ -55,7 +76,9 @@ impl GeoScribeFsService for MyGeoScribeFsService {
         request: Request<WriteRequest>,
     ) -> Result<Response<WriteResponse>, Status> {
         let volume_name = request.into_inner().volume_name;
-        self.handle_write(&volume_name).await
+        Ok(Response::new(
+            self.manager.handle_write(&volume_name).await?,
+        ))
     }
 
     async fn ask_write(
@@ -72,7 +95,11 @@ impl GeoScribeFsService for MyGeoScribeFsService {
 
         let volume_name = request.into_inner().volume_name;
 
-        self.handle_ask_write(&volume_name, &remote_addr).await
+        Ok(Response::new(
+            self.manager
+                .handle_ask_write(&volume_name, &remote_addr)
+                .await?,
+        ))
     }
 
     async fn snapshot(
@@ -80,7 +107,9 @@ impl GeoScribeFsService for MyGeoScribeFsService {
         request: Request<SnapshotRequest>,
     ) -> Result<Response<SnapshotResponse>, Status> {
         let volume_name = request.into_inner().volume_name;
-        self.handle_snapshot(&volume_name).await
+        Ok(Response::new(
+            self.manager.handle_snapshot(&volume_name).await?,
+        ))
     }
 
     async fn restore(
@@ -90,7 +119,9 @@ impl GeoScribeFsService for MyGeoScribeFsService {
         let request = request.into_inner();
         let volume_name = request.volume_name;
         let date = request.date;
-        self.handle_restore(&volume_name, &date).await
+        Ok(Response::new(
+            self.manager.handle_restore(&volume_name, &date).await?,
+        ))
     }
 
     async fn list_snapshots(
@@ -99,7 +130,9 @@ impl GeoScribeFsService for MyGeoScribeFsService {
     ) -> Result<Response<ListSnapshotsResponse>, Status> {
         let request = request.into_inner();
         let volume_name = request.volume_name;
-        self.handle_list_snapshots(&volume_name).await
+        Ok(Response::new(
+            self.manager.handle_list_snapshots(&volume_name).await?,
+        ))
     }
 }
 
@@ -136,30 +169,27 @@ impl Default for ServerConfig {
 }
 
 pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let mut volume_managers = BTreeMap::new();
+    let manager = Arc::new(GeoScribeFsManager::new(
+        config.addr.clone(),
+        config.peers.clone(),
+        config.token.clone(),
+    ));
     for volume_path in &config.volume_paths {
-        let addr = config.addr.clone();
-        let token = config.token.clone();
-
         let cfg = fuse::Config {
             volume: volume_path.clone(),
-            token: token.clone(),
-            addr: addr.clone(),
+            manager: manager.clone(),
         };
         let volume_manager = volume_manager::mount_and_get(cfg)?;
-        volume_managers.insert(volume_path.clone(), volume_manager);
+        manager.register_volume(volume_manager);
     }
 
     let socket_addr: SocketAddr = config.addr.parse()?;
     debug!("Starting gRPC daemon on {}", socket_addr);
 
-    let service = MyGeoScribeFsService::new(
-        config.addr.clone(),
-        config.peers.clone(),
-        config.token.clone(),
-        volume_managers,
-    )
-    .await?;
+    let service = MyGeoScribeFsService {
+        manager: manager.clone(),
+    };
+
     let interceptor = AuthInterceptor {
         token: config.token.clone(),
     };

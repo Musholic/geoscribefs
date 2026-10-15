@@ -115,4 +115,8 @@ impl VolumeManager for BtrfsVolumeManager {
 
         Ok(snapshots)
     }
+
+    fn volume_path(&self) -> &str {
+        &self.mount.mountpoint
+    }
 }

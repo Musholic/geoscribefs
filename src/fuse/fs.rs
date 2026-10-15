@@ -15,8 +15,8 @@ use fuse_backend_rs::{
 use tokio::sync::Mutex;
 
 use crate::{
-    client::GeoScribeClient,
     fuse::{Config, GeoScribeFs, MountHandle, detach_mount},
+    server::write::WriteHandler,
 };
 
 impl GeoScribeFs {
@@ -40,8 +40,7 @@ impl GeoScribeFs {
             inner,
             mountpoint: cfg.volume,
             volume_name,
-            token: cfg.token,
-            addr: cfg.addr,
+            manager: cfg.manager,
             detached: Mutex::new(false),
         })
     }
@@ -104,10 +103,7 @@ impl GeoScribeFs {
         let timeout_duration = Duration::from_secs(10);
 
         let auth_result = tokio::time::timeout(timeout_duration, async {
-            let mut client =
-                GeoScribeClient::connect(self.addr.clone(), self.token.clone()).await?;
-
-            client.write(self.volume_name.clone()).await
+            self.manager.handle_write(&self.volume_name).await
         })
         .await?;
 
@@ -124,6 +120,11 @@ impl GeoScribeFs {
         tracing::trace!("FUSE mount point detached");
         *detached = true;
         Ok(())
+    }
+
+    /// Sync the data before reading.
+    pub async fn sync_before_read(&self) {
+        // Simplest version is to sync regardless if we really need to, so we just trigger a sync
     }
 }
 

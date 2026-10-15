@@ -26,14 +26,16 @@ mod macros;
 mod ops_async;
 mod ops_sync;
 
-use std::io::Result;
 use std::path::Path;
 use std::process::Command;
 use std::thread::JoinHandle;
+use std::{io::Result, sync::Arc};
 
 use fuse_backend_rs::passthrough::PassthroughFs;
 use nix::mount::{MntFlags, umount2};
 use tokio::sync::Mutex;
+
+use crate::server::GeoScribeFsManager;
 
 /// Automatically unmounts the FUSE mount when dropped.
 pub struct MountHandle {
@@ -69,8 +71,7 @@ pub struct GeoScribeFs {
     inner: PassthroughFs,
     mountpoint: String,
     volume_name: String,
-    token: String,
-    addr: String,
+    manager: Arc<GeoScribeFsManager>,
     detached: Mutex<bool>,
 }
 
@@ -96,9 +97,7 @@ fn detach_mount(mountpoint: &str) -> std::io::Result<()> {
     Err(std::io::Error::last_os_error())
 }
 
-#[derive(Clone, Debug)]
 pub struct Config {
     pub volume: String,
-    pub token: String,
-    pub addr: String,
+    pub manager: Arc<GeoScribeFsManager>,
 }
