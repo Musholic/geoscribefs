@@ -77,3 +77,5 @@ pub fn get_random_addr() -> String {
     let port = listener.local_addr().unwrap().port();
     format!("127.0.0.1:{}", port)
 }
+
+pub type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;

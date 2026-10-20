@@ -43,16 +43,16 @@ impl VolumeManager for BtrfsVolumeManager {
         let snapshot_path = get_snapshot_path(&self.snapshots_path, date)?;
 
         tracing::trace!(
-            "Snapshotting volume: {} to {}",
-            self.mount.mountpoint,
-            snapshot_path
+            mountpoint = ?self.mount.mountpoint,
+            snapshot_path = ?snapshot_path,
+            "Snapshotting volume",
         );
         let status = std::process::Command::new("btrfs")
             .args([
                 "subvolume",
                 "snapshot",
                 "-r",
-                &self.mount.mountpoint,
+                &self.mount.mountpoint.to_string_lossy(),
                 &snapshot_path,
             ])
             .status()?;
@@ -70,13 +70,17 @@ impl VolumeManager for BtrfsVolumeManager {
         let snapshot_path = get_snapshot_path(&self.snapshots_path, date)?;
         tracing::debug!(
             "Restoring volume: {} from {}",
-            self.mount.mountpoint,
+            &self.mount.mountpoint.to_string_lossy(),
             snapshot_path
         );
 
         // To restore, we delete the existing volume and snapshot the backup back
         let delete_status = std::process::Command::new("btrfs")
-            .args(["subvolume", "delete", &self.mount.mountpoint])
+            .args([
+                "subvolume",
+                "delete",
+                &self.mount.mountpoint.to_string_lossy(),
+            ])
             .status()?;
 
         if !delete_status.success() {
@@ -90,7 +94,7 @@ impl VolumeManager for BtrfsVolumeManager {
                 "subvolume",
                 "snapshot",
                 &snapshot_path,
-                &self.mount.mountpoint,
+                &self.mount.mountpoint.to_string_lossy(),
             ])
             .status()?;
 
@@ -116,7 +120,11 @@ impl VolumeManager for BtrfsVolumeManager {
         Ok(snapshots)
     }
 
-    fn volume_path(&self) -> &str {
-        &self.mount.mountpoint
+    fn volume_path(&self) -> PathBuf {
+        self.mount.mountpoint.clone()
+    }
+
+    fn volume_name(&self) -> String {
+        self.mount.volume_name.clone()
     }
 }

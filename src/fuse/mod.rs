@@ -26,7 +26,7 @@ mod macros;
 mod ops_async;
 mod ops_sync;
 
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::thread::JoinHandle;
 use std::{io::Result, sync::Arc};
@@ -39,7 +39,8 @@ use crate::server::GeoScribeFsManager;
 
 /// Automatically unmounts the FUSE mount when dropped.
 pub struct MountHandle {
-    pub mountpoint: String,
+    pub mountpoint: PathBuf,
+    pub volume_name: String,
     thread_handle: Option<JoinHandle<Result<()>>>,
 }
 
@@ -69,15 +70,15 @@ impl Drop for MountHandle {
 
 pub struct GeoScribeFs {
     inner: PassthroughFs,
-    mountpoint: String,
+    mountpoint: PathBuf,
     volume_name: String,
     manager: Arc<GeoScribeFsManager>,
     detached: Mutex<bool>,
 }
 
-fn detach_mount(mountpoint: &str) -> std::io::Result<()> {
+fn detach_mount(mountpoint: &PathBuf) -> std::io::Result<()> {
     // Fast path: Direct kernel syscall (works if root / CAP_SYS_ADMIN)
-    if umount2(Path::new(mountpoint), MntFlags::MNT_DETACH).is_ok() {
+    if umount2(mountpoint, MntFlags::MNT_DETACH).is_ok() {
         tracing::trace!("Detached mountpoint via umount2");
         return Ok(());
     }
@@ -85,7 +86,7 @@ fn detach_mount(mountpoint: &str) -> std::io::Result<()> {
     // Unprivileged path: Delegate to setuid helper binary
     for bin in ["fusermount3", "fusermount"] {
         if Command::new(bin)
-            .args(["-u", "-z", "-q", mountpoint])
+            .args(["-u", "-z", "-q", &mountpoint.to_string_lossy()])
             .status()
             .is_ok_and(|s| s.success())
         {
@@ -98,6 +99,7 @@ fn detach_mount(mountpoint: &str) -> std::io::Result<()> {
 }
 
 pub struct Config {
-    pub volume: String,
+    pub volume: PathBuf,
+    pub volume_name: String,
     pub manager: Arc<GeoScribeFsManager>,
 }

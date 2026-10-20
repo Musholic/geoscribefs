@@ -23,7 +23,7 @@ impl StatusHandler for GeoScribeFsManager {
             .map_err(|e| FsError::LockPoisoned(e.to_string()))?;
 
         for (k, v) in volumes.iter() {
-            status.push_str(&format!("- {}: {}\n", k, v));
+            status.push_str(&format!("- {}: {}\n", k, v.owner));
         }
         Ok(StatusResponse { status })
     }

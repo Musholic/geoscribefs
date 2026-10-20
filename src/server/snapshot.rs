@@ -2,6 +2,7 @@ use crate::{
     proto::{ListSnapshotsResponse, RestoreResponse, SnapshotResponse},
     server::{GeoScribeFsManager, error::FsError},
 };
+use tokio::process::{ChildStdout, Command};
 
 #[tonic::async_trait]
 pub trait SnapshotHandler {
@@ -15,6 +16,7 @@ pub trait SnapshotHandler {
         &self,
         volume_name: &str,
     ) -> Result<ListSnapshotsResponse, FsError>;
+    async fn handle_send_snapshot(&self, volume_name: &str) -> Result<ChildStdout, FsError>;
 }
 
 #[tonic::async_trait]
@@ -56,5 +58,21 @@ impl SnapshotHandler for GeoScribeFsManager {
             .await?;
 
         Ok(ListSnapshotsResponse { snapshots })
+    }
+
+    async fn handle_send_snapshot(&self, volume_name: &str) -> Result<ChildStdout, FsError> {
+        let snapshot_date = self.handle_snapshot(volume_name).await?.date;
+        // Hardcode btrfs for now
+        let mut send_proc = Command::new("btrfs")
+            .arg("send")
+            .arg(&snapshot_date)
+            .spawn()?;
+
+        let stdout = send_proc
+            .stdout
+            .take()
+            .ok_or_else(|| FsError::IoOther("Failed to read send process stdout".to_string()))?;
+
+        Ok(stdout)
     }
 }

@@ -1,9 +1,9 @@
 use crate::proto::{
-    ListSnapshotsRequest, RestoreRequest, SnapshotRequest, StatusRequest, WriteRequest,
-    geo_scribe_fs_service_client::GeoScribeFsServiceClient,
+    ListSnapshotsRequest, RestoreRequest, SendSnapshotRequest, SnapshotChunk, SnapshotRequest,
+    StatusRequest, WriteRequest, geo_scribe_fs_service_client::GeoScribeFsServiceClient,
 };
 use std::time::Duration;
-use tonic::{Request, transport::Channel};
+use tonic::{Request, Streaming, transport::Channel};
 
 macro_rules! with_retries {
     ($action:expr) => {{
@@ -46,7 +46,10 @@ pub struct GeoScribeClient {
 }
 
 impl GeoScribeClient {
-    pub async fn connect(addr: String, token: String) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn connect(
+        addr: String,
+        token: String,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let channel =
             tonic::transport::Endpoint::from_shared(format!("http://{}", addr))?.connect_lazy();
 
@@ -58,12 +61,15 @@ impl GeoScribeClient {
         Ok(Self { inner })
     }
 
-    pub async fn status(&mut self) -> Result<String, Box<dyn std::error::Error>> {
+    pub async fn status(&mut self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let res = with_retries!(self.inner.status(StatusRequest {}))?;
         Ok(res.into_inner().status)
     }
 
-    pub async fn write(&mut self, volume_name: String) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn write(
+        &mut self,
+        volume_name: String,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let res = with_retries!(self.inner.write(WriteRequest {
             volume_name: volume_name.clone()
         }))?;
@@ -73,7 +79,7 @@ impl GeoScribeClient {
     pub async fn snapshot(
         &mut self,
         volume_name: String,
-    ) -> Result<(bool, String), Box<dyn std::error::Error>> {
+    ) -> Result<(bool, String), Box<dyn std::error::Error + Send + Sync>> {
         let res = with_retries!(self.inner.snapshot(SnapshotRequest {
             volume_name: volume_name.clone()
         }))?;
@@ -85,7 +91,7 @@ impl GeoScribeClient {
         &mut self,
         volume_name: String,
         date: String,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let res = with_retries!(self.inner.restore(RestoreRequest {
             volume_name: volume_name.clone(),
             date: date.clone()
@@ -96,10 +102,22 @@ impl GeoScribeClient {
     pub async fn list_snapshots(
         &mut self,
         volume_name: String,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
         let res = with_retries!(self.inner.list_snapshots(ListSnapshotsRequest {
             volume_name: volume_name.clone()
         }))?;
         Ok(res.into_inner().snapshots)
+    }
+    pub async fn send_snapshot(
+        &mut self,
+        volume_name: String,
+    ) -> Result<Streaming<SnapshotChunk>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self
+            .inner
+            .send_snapshot(SendSnapshotRequest {
+                volume_name: volume_name.clone(),
+            })
+            .await?
+            .into_inner())
     }
 }

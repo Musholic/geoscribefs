@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::{
     fuse,
     volume_manager::{StorageError, VolumeManager},
@@ -9,9 +11,9 @@ pub struct ZfsVolumeManager {
 }
 
 /// Resolve the mountpoint to a ZFS dataset name
-fn get_dataset_name(mountpoint: &str) -> Result<String, StorageError> {
+fn get_dataset_name(mountpoint: &Path) -> Result<String, StorageError> {
     let output = std::process::Command::new("zfs")
-        .args(["list", "-H", "-o", "name", mountpoint])
+        .args(["list", "-H", "-o", "name", &mountpoint.to_string_lossy()])
         .output()
         .map_err(|e| StorageError::CommandFailed(format!("Failed to execute zfs list: {}", e)))?;
 
@@ -121,7 +123,11 @@ impl VolumeManager for ZfsVolumeManager {
         Ok(snapshots)
     }
 
-    fn volume_path(&self) -> &str {
-        &self.mount.mountpoint
+    fn volume_path(&self) -> PathBuf {
+        self.mount.mountpoint.clone()
+    }
+
+    fn volume_name(&self) -> String {
+        self.mount.volume_name.clone()
     }
 }

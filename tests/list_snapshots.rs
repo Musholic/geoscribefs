@@ -1,6 +1,6 @@
 mod common;
 
-use crate::common::{get_random_addr, start_server, temp_volume};
+use crate::common::{TestResult, get_random_addr, start_server, temp_volume};
 use geoscribefs::{client::GeoScribeClient, server::ServerConfig, volume_manager::FsBackend};
 use rstest::rstest;
 use test_log::test;
@@ -9,9 +9,10 @@ use test_log::test;
 #[rstest]
 async fn test_list_snapshots(
     #[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: FsBackend,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> TestResult {
     let temp_vol = temp_volume::create_temp_volume(backend);
     let volume_path = temp_vol.volume.path().to_string_lossy().into_owned();
+    let volume_name = temp_vol.volume.volume_name();
 
     let addr = get_random_addr();
 
@@ -28,16 +29,16 @@ async fn test_list_snapshots(
     // Snapshot the volume once
     let mut client =
         GeoScribeClient::connect(addr.to_string(), ServerConfig::default().token).await?;
-    let (_, date) = client.snapshot(volume_path.clone()).await?;
+    let (_, date) = client.snapshot(volume_name.to_string()).await?;
 
     // Do another change
     std::fs::write(&file_path, "Hello v2").unwrap();
 
     // Snapshot the volume again
-    let (_, date2) = client.snapshot(volume_path.clone()).await?;
+    let (_, date2) = client.snapshot(volume_name.to_string()).await?;
 
     // List snapshots
-    let snapshots = client.list_snapshots(volume_path.clone()).await?;
+    let snapshots = client.list_snapshots(volume_name.to_string()).await?;
     assert_eq!(vec![date, date2], snapshots);
 
     Ok(())

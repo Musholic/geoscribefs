@@ -1,26 +1,31 @@
 mod common;
 
-use geoscribefs::{client::GeoScribeClient, server::ServerConfig};
-
+use crate::common::{TestResult, get_random_addr, start_server, temp_volume};
+use geoscribefs::{client::GeoScribeClient, server::ServerConfig, volume_manager::FsBackend};
 use pretty_assertions::assert_eq;
+use test_log::test;
 
-use crate::common::{get_random_addr, start_server};
-
-#[tokio::test]
-async fn test_status() -> Result<(), Box<dyn std::error::Error>> {
+#[test(tokio::test)]
+async fn test_status() -> TestResult {
     let addr = get_random_addr();
     let addr2 = get_random_addr();
     let addr3 = get_random_addr();
+    let temp_vol_a = temp_volume::create_temp_volume_named(FsBackend::Btrfs, "vol_a");
+    let volume_path_a = temp_vol_a.volume.path().to_string_lossy().into_owned();
+    let temp_vol_b = temp_volume::create_temp_volume_named(FsBackend::Btrfs, "vol_b");
+    let volume_path_b = temp_vol_b.volume.path().to_string_lossy().into_owned();
 
     start_server(ServerConfig {
         addr: addr.to_string(),
         peers: vec![addr2.to_string(), addr3.to_string()],
+        volume_paths: vec![volume_path_a.clone()],
         ..Default::default()
     })
     .await;
     start_server(ServerConfig {
         addr: addr2.to_string(),
         peers: vec![addr.to_string(), addr3.to_string()],
+        volume_paths: vec![volume_path_b.clone()],
         ..Default::default()
     })
     .await;

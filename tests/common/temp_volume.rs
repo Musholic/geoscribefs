@@ -59,10 +59,17 @@ impl BtrfsTempVolume {
         let base_volume_path = Path::new("/var/lib/geoscribefs/btrfs").join(random_dir);
         std::fs::create_dir_all(&base_volume_path).expect("Failed to create base volume directory");
         let volume_path = base_volume_path.join(volume_name);
-        Command::new("btrfs")
+        let status = Command::new("btrfs")
             .args(["subvolume", "create", volume_path.to_str().unwrap()])
             .status()
             .expect("Failed to create subvolume");
+
+        assert!(
+            status.success(),
+            "Failed to create subvolume with path {}: {}",
+            volume_path.to_string_lossy(),
+            status
+        );
 
         Self { volume_path }
     }

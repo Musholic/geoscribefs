@@ -1,71 +1,60 @@
-use std::{
-    any::Any,
-    io::{self, Error, Result},
-    path::Path,
-    sync::{Arc, atomic::AtomicBool},
-    time::Duration,
+use crate::{
+    fuse::{Config, GeoScribeFs, MountHandle, detach_mount},
+    server::write::WriteHandler,
 };
-
 use fuse_backend_rs::{
     api::{BackendFileSystem, Vfs, VfsOptions, filesystem::Entry, server::Server},
     async_runtime::Runtime,
     passthrough::{self, PassthroughFs},
     transport::{FuseDevTask, FuseSession},
 };
-use tokio::sync::Mutex;
-
-use crate::{
-    fuse::{Config, GeoScribeFs, MountHandle, detach_mount},
-    server::write::WriteHandler,
+use std::{
+    any::Any,
+    io::{self, Result},
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
 };
+use tokio::sync::Mutex;
 
 impl GeoScribeFs {
     pub fn new(cfg: Config) -> Result<Self> {
-        let volume_path = Path::new(&cfg.volume);
-        let volume_name = volume_path
-            .file_name()
-            .ok_or_else(|| Error::new(std::io::ErrorKind::InvalidInput, "Invalid volume path"))?
-            .to_string_lossy()
-            .to_string();
-
         let pt_cfg = passthrough::Config {
-            root_dir: cfg.volume.clone(),
+            root_dir: cfg.volume.to_string_lossy().to_string(),
             do_import: false,
             ..Default::default()
         };
-        let inner = PassthroughFs::<()>::new(pt_cfg).map_err(Error::other)?;
-        inner.import().map_err(Error::other)?;
+        let inner = PassthroughFs::<()>::new(pt_cfg).map_err(io::Error::other)?;
+        inner.import().map_err(io::Error::other)?;
 
         Ok(Self {
             inner,
             mountpoint: cfg.volume,
-            volume_name,
             manager: cfg.manager,
             detached: Mutex::new(false),
+            volume_name: cfg.volume_name,
         })
     }
 
     /// Mounts the filesystem and blocks the current thread to process FUSE requests.
     fn run_blocking(self) -> Result<()> {
-        let volume_path_str = self.mountpoint.clone();
-        let volume_path = Path::new(&volume_path_str);
+        let volume_path = &self.mountpoint.clone();
 
         let vfs = Vfs::new(VfsOptions::default());
-        vfs.mount(Box::new(self), "/").map_err(Error::other)?;
+        vfs.mount(Box::new(self), "/").map_err(io::Error::other)?;
 
         let vfs = Arc::new(vfs);
         let server = Arc::new(Server::new(vfs));
 
         let mut se =
-            FuseSession::new(volume_path, "geoscribefs", "", false).map_err(Error::other)?;
-        se.mount().map_err(Error::other)?;
+            FuseSession::new(volume_path, "geoscribefs", "", false).map_err(io::Error::other)?;
+        se.mount().map_err(io::Error::other)?;
         let mut guard = SessionGuard(Some(se));
         let se = guard.0.as_mut().unwrap();
 
         let state = Arc::new(AtomicBool::new(false));
         let buf_size = (fuse_backend_rs::api::server::MAX_BUFFER_SIZE + 0x1000) as usize;
 
-        let fuse_file = se.clone_fuse_file().map_err(Error::other)?;
+        let fuse_file = se.clone_fuse_file().map_err(io::Error::other)?;
         let mut task = FuseDevTask::new(buf_size, fuse_file, server, state);
 
         let rt = Runtime::new();
@@ -80,11 +69,13 @@ impl GeoScribeFs {
     /// Spawns a background thread to run the filesystem and returns a MountHandle.
     pub fn start(self) -> Result<MountHandle> {
         let mountpoint = self.mountpoint.clone();
+        let volume_name = self.volume_name.clone();
 
         let thread_handle = std::thread::spawn(move || self.run_blocking());
 
         Ok(MountHandle {
             mountpoint,
+            volume_name,
             thread_handle: Some(thread_handle),
         })
     }
@@ -98,7 +89,10 @@ impl GeoScribeFs {
             return Ok(());
         }
 
-        tracing::trace!("Asking for write authorization");
+        tracing::trace!(
+            "Asking for write authorization for volume {}",
+            self.volume_name
+        );
 
         let timeout_duration = Duration::from_secs(10);
 
@@ -108,13 +102,13 @@ impl GeoScribeFs {
         .await?;
 
         if auth_result.is_err() {
-            return Err(Error::from_raw_os_error(libc::EACCES));
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
         }
 
         // Authorization was granted, detach the FUSE mount point
         tracing::trace!("Authorization granted, detaching FUSE mount point");
         if let Err(e) = detach_mount(&self.mountpoint) {
-            return Err(Error::other(e));
+            return Err(io::Error::other(e));
         }
 
         tracing::trace!("FUSE mount point detached");
@@ -123,8 +117,13 @@ impl GeoScribeFs {
     }
 
     /// Sync the data before reading.
-    pub async fn sync_before_read(&self) {
+    pub async fn sync_before_read(&self) -> Result<()> {
         // Simplest version is to sync regardless if we really need to, so we just trigger a sync
+        //self.manager
+        //    .sync(&self.volume_name)
+        //    .await
+        //    .map_err(Error::other)
+        Ok(())
     }
 }
 

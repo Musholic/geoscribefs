@@ -1,9 +1,17 @@
-use crate::volume_manager::StorageError;
+use std::backtrace::Backtrace;
 
-#[derive(thiserror::Error, Debug)]
+use crate::volume_manager::StorageError;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
 pub enum FsError {
-    #[error("Volume not found: {0}")]
-    NotFound(String),
+    #[error("Volume not found: {volume}")]
+    NotFound {
+        volume: String,
+        bt: Option<Backtrace>,
+    },
+    #[error("Volume not mounted: {0}")]
+    NotMounted(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Peer {0} denied write for volume {1}")]
@@ -16,6 +24,12 @@ pub enum FsError {
     LockPoisoned(String),
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
+    #[error("Unexpected error: {0}")]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
+    #[error("Unexpected error: {0}")]
+    IoOther(String),
+    #[error("Invalid volume path: {0}")]
+    InvalidVolumePath(String),
 }
 
 impl From<tonic::transport::Error> for FsError {
@@ -34,8 +48,26 @@ impl From<FsError> for tonic::Status {
     fn from(err: FsError) -> Self {
         let message = err.to_string();
         match err {
-            FsError::NotFound(_) => tonic::Status::not_found(message),
+            FsError::NotFound { .. } => tonic::Status::not_found(message),
             _ => tonic::Status::internal(message),
+        }
+    }
+}
+
+impl FsError {
+    pub fn backtrace(&self) -> Option<&Backtrace> {
+        match self {
+            Self::NotFound { bt, .. } => bt.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn not_found(volume: &str) -> Self {
+        let backtrace = Backtrace::capture();
+        tracing::trace!(volume = %volume, backtrace = %backtrace, "Volume not found");
+        Self::NotFound {
+            volume: volume.to_string(),
+            bt: Some(backtrace),
         }
     }
 }

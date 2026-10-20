@@ -17,7 +17,7 @@ use crate::common::{
 #[test(tokio::test)]
 async fn test_mount_volume_and_read() {
     let dir = tempdir().expect("Failed to create temp dir");
-    let volume_path = dir.path().to_str().unwrap().to_string();
+    let volume_path = dir.path();
 
     // Create hello.txt with content "Hello"
     let hello_path = dir.path().join("hello.txt");
@@ -30,7 +30,8 @@ async fn test_mount_volume_and_read() {
     ));
 
     let cfg = Config {
-        volume: volume_path,
+        volume: volume_path.to_path_buf(),
+        volume_name: "test_volume".to_string(),
         manager: manager.clone(),
     };
 

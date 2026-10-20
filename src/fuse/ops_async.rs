@@ -96,6 +96,7 @@ impl AsyncFileSystem for GeoScribeFs {
         parent: Self::Inode,
         name: &CStr,
     ) -> io::Result<Entry> {
+        self.sync_before_read().await?;
         self.inner.async_lookup(ctx, parent, name).await
     }
 
