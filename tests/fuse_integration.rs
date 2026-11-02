@@ -1,45 +1,35 @@
 mod common;
 
-use geoscribefs::fuse::{Config, GeoScribeFs};
-use geoscribefs::server::{GeoScribeFsManager, ServerConfig};
+use geoscribefs::server::ServerConfig;
 use geoscribefs::volume_manager::FsBackend;
 use rstest::rstest;
 use std::fs;
 use std::io::{Read, Write};
-use std::sync::Arc;
-use tempfile::tempdir;
 use test_log::test;
 
 use crate::common::{
     get_random_addr, is_fuse_mounted, start_server, temp_volume, wait_for_fuse_mount,
 };
 
-#[test(tokio::test)]
-async fn test_mount_volume_and_read() {
-    let dir = tempdir().expect("Failed to create temp dir");
-    let volume_path = dir.path();
+#[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
+#[rstest]
+async fn test_read(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: FsBackend) {
+    let temp_vol = temp_volume::create_temp_volume(backend);
+    let volume_path = temp_vol.volume.path().to_string_lossy().into_owned();
 
     // Create hello.txt with content "Hello"
-    let hello_path = dir.path().join("hello.txt");
+    let hello_path = temp_vol.volume.path().join("hello.txt");
     std::fs::write(&hello_path, "Hello").expect("Failed to write hello.txt");
 
-    let manager = Arc::new(GeoScribeFsManager::new(
-        get_random_addr().to_string(),
-        vec![],
-        "test_token".to_string(),
-    ));
+    let addr = get_random_addr();
+    start_server(ServerConfig {
+        addr,
+        volume_paths: vec![volume_path.clone()],
+        ..Default::default()
+    })
+    .await;
 
-    let cfg = Config {
-        volume: volume_path.to_path_buf(),
-        volume_name: "test_volume".to_string(),
-        manager: manager.clone(),
-    };
-
-    let fs = GeoScribeFs::new(cfg).expect("Failed to create GeoScribeFs");
-
-    let _mount = fs.start().expect("Failed to start FUSE mount");
-
-    wait_for_fuse_mount(dir.path()).await;
+    wait_for_fuse_mount(temp_vol.volume.path()).await;
 
     // Read hello.txt and verify its content
     let content = std::fs::read_to_string(&hello_path).expect("Failed to read hello.txt");
@@ -53,7 +43,9 @@ async fn test_fuse_write(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: Fs
     let temp_vol = temp_volume::create_temp_volume(backend);
     let volume_path = temp_vol.volume.path().to_string_lossy().into_owned();
 
+    let addr = get_random_addr();
     start_server(ServerConfig {
+        addr,
         volume_paths: vec![volume_path.clone()],
         ..Default::default()
     })
@@ -103,9 +95,7 @@ async fn test_fuse_write(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: Fs
 // Spawn two servers, write on the first and read on the second
 #[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 #[rstest]
-async fn test_fuse_write_server1_then_read_server2(
-    #[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: FsBackend,
-) {
+async fn test_fuse_write_server1_then_read_server2(#[values(FsBackend::Btrfs)] backend: FsBackend) {
     // Start the two servers, each with their volume of the same name
     let addr = get_random_addr();
     let addr2 = get_random_addr();

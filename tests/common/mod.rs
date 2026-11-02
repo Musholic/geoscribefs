@@ -42,7 +42,9 @@ pub async fn start_server(config: ServerConfig) {
     tracing::debug!("Starting server at {}", config.addr);
     let addr = &config.addr.clone();
     tokio::spawn(async {
-        let _ = run_server(config).await;
+        if let Err(e) = run_server(config).await {
+            tracing::error!("Server error: {}", e);
+        }
     });
 
     tracing::debug!("Waiting for server...");

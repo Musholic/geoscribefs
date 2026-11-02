@@ -1,7 +1,8 @@
-use std::backtrace::Backtrace;
+use std::{backtrace::Backtrace, sync::PoisonError};
 
 use crate::volume_manager::StorageError;
 use thiserror::Error;
+use tokio::{io, time::error::Elapsed};
 
 #[derive(Error, Debug)]
 pub enum FsError {
@@ -10,6 +11,8 @@ pub enum FsError {
         volume: String,
         bt: Option<Backtrace>,
     },
+    #[error("No snapshot found for volume {0}")]
+    NoSnapshotFound(String),
     #[error("Volume not mounted: {0}")]
     NotMounted(String),
     #[error("IO error: {0}")]
@@ -30,6 +33,8 @@ pub enum FsError {
     IoOther(String),
     #[error("Invalid volume path: {0}")]
     InvalidVolumePath(String),
+    #[error("Timeout error: {0}")]
+    TimeOut(#[from] Elapsed),
 }
 
 impl From<tonic::transport::Error> for FsError {
@@ -54,6 +59,18 @@ impl From<FsError> for tonic::Status {
     }
 }
 
+impl<T> From<PoisonError<T>> for FsError {
+    fn from(err: PoisonError<T>) -> Self {
+        Self::LockPoisoned(err.to_string())
+    }
+}
+
+impl From<fuse_backend_rs::buffer::Error> for FsError {
+    fn from(err: fuse_backend_rs::buffer::Error) -> Self {
+        Self::IoOther(err.to_string())
+    }
+}
+
 impl FsError {
     pub fn backtrace(&self) -> Option<&Backtrace> {
         match self {
@@ -69,5 +86,11 @@ impl FsError {
             volume: volume.to_string(),
             bt: Some(backtrace),
         }
+    }
+}
+
+impl From<FsError> for io::Error {
+    fn from(err: FsError) -> Self {
+        io::Error::other(err)
     }
 }

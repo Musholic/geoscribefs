@@ -1,4 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
+
+use tokio::process::Child;
 
 use crate::{
     fuse,
@@ -121,6 +126,14 @@ impl VolumeManager for ZfsVolumeManager {
             .collect();
 
         Ok(snapshots)
+    }
+
+    fn receive_snapshot_process(&self) -> io::Result<Child> {
+        todo!()
+    }
+
+    fn send_snapshot_process(&self, _snapshot_date: &str) -> io::Result<Child> {
+        todo!()
     }
 
     fn volume_path(&self) -> PathBuf {

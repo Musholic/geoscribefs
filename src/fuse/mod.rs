@@ -26,39 +26,37 @@ mod macros;
 mod ops_async;
 mod ops_sync;
 
+use std::panic;
 use std::path::PathBuf;
-use std::process::Command;
+use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::{io::Result, sync::Arc};
 
 use fuse_backend_rs::passthrough::PassthroughFs;
-use nix::mount::{MntFlags, umount2};
+use fuse_backend_rs::transport::FuseSession;
 use tokio::sync::Mutex;
 
-use crate::server::GeoScribeFsManager;
+use crate::server::{GeoScribeFsManager, error::FsError};
 
 /// Automatically unmounts the FUSE mount when dropped.
 pub struct MountHandle {
     pub mountpoint: PathBuf,
     pub volume_name: String,
-    thread_handle: Option<JoinHandle<Result<()>>>,
+    thread_handle: Option<JoinHandle<Result<(), FsError>>>,
 }
 
 impl MountHandle {
     /// Manually detach and wait for the filesystem thread to finish.
-    pub fn unmount(mut self) -> Result<()> {
+    pub fn unmount(mut self) -> Result<(), FsError> {
         self.cleanup()
     }
 
-    fn cleanup(&mut self) -> Result<()> {
-        let mut res = Ok(());
-        if !self.mountpoint.is_empty() {
-            res = detach_mount(&self.mountpoint);
+    fn cleanup(&mut self) -> Result<(), FsError> {
+        if let Some(handle) = self.thread_handle.take()
+            && let Err(e) = handle.join()
+        {
+            panic::resume_unwind(e);
         }
-        if let Some(handle) = self.thread_handle.take() {
-            let _ = handle.join();
-        }
-        res
+        Ok(())
     }
 }
 
@@ -70,32 +68,11 @@ impl Drop for MountHandle {
 
 pub struct GeoScribeFs {
     inner: PassthroughFs,
+    session: std::sync::Mutex<FuseSession>,
+    pub volume_name: String,
     mountpoint: PathBuf,
-    volume_name: String,
     manager: Arc<GeoScribeFsManager>,
     detached: Mutex<bool>,
-}
-
-fn detach_mount(mountpoint: &PathBuf) -> std::io::Result<()> {
-    // Fast path: Direct kernel syscall (works if root / CAP_SYS_ADMIN)
-    if umount2(mountpoint, MntFlags::MNT_DETACH).is_ok() {
-        tracing::trace!("Detached mountpoint via umount2");
-        return Ok(());
-    }
-
-    // Unprivileged path: Delegate to setuid helper binary
-    for bin in ["fusermount3", "fusermount"] {
-        if Command::new(bin)
-            .args(["-u", "-z", "-q", &mountpoint.to_string_lossy()])
-            .status()
-            .is_ok_and(|s| s.success())
-        {
-            tracing::trace!("Detached mountpoint via {bin}");
-            return Ok(());
-        }
-    }
-
-    Err(std::io::Error::last_os_error())
 }
 
 pub struct Config {

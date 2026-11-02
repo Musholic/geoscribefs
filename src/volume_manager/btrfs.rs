@@ -1,4 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    process::Stdio,
+};
+
+use tokio::process::{Child, Command};
 
 use crate::{
     fuse,
@@ -118,6 +124,31 @@ impl VolumeManager for BtrfsVolumeManager {
             .unwrap_or_default();
 
         Ok(snapshots)
+    }
+
+    fn receive_snapshot_process(&self) -> io::Result<Child> {
+        tracing::debug!(
+            snapshots_path = ?self.snapshots_path,
+            "Start btrfs receive process"
+        );
+        Command::new("btrfs")
+            .args(["receive", &self.snapshots_path.to_string_lossy()])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+    }
+
+    fn send_snapshot_process(&self, snapshot_date: &str) -> io::Result<Child> {
+        let snapshot_path = get_snapshot_path(&self.snapshots_path, snapshot_date)?;
+        tracing::debug!(
+            snapshots_path = ?self.snapshots_path,
+            "Start btrfs send process"
+        );
+
+        Command::new("btrfs")
+            .arg("send")
+            .arg(&snapshot_path)
+            .stdout(Stdio::piped())
+            .spawn()
     }
 
     fn volume_path(&self) -> PathBuf {

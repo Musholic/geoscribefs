@@ -69,10 +69,7 @@ impl GeoScribeFsManager {
     }
 
     fn get_volume(&self, volume_name: &str) -> Result<Volume, FsError> {
-        let volumes = self
-            .volumes
-            .read()
-            .map_err(|e| FsError::LockPoisoned(e.to_string()))?;
+        let volumes = self.volumes.read()?;
         volumes
             .get(volume_name)
             .cloned()
