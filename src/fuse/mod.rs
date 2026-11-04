@@ -28,11 +28,12 @@ mod ops_sync;
 
 use std::panic;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 
-use fuse_backend_rs::passthrough::PassthroughFs;
+use arc_swap::ArcSwap;
 use fuse_backend_rs::transport::FuseSession;
+use fuse_backend_rs::{abi::fuse_abi::FsOptions, passthrough::PassthroughFs};
 use tokio::sync::Mutex;
 
 use crate::server::{GeoScribeFsManager, error::FsError};
@@ -67,12 +68,13 @@ impl Drop for MountHandle {
 }
 
 pub struct GeoScribeFs {
-    inner: PassthroughFs,
+    inner: ArcSwap<PassthroughFs>,
     session: std::sync::Mutex<FuseSession>,
     pub volume_name: String,
     mountpoint: PathBuf,
     manager: Arc<GeoScribeFsManager>,
     detached: Mutex<bool>,
+    fs_opts: OnceLock<FsOptions>,
 }
 
 pub struct Config {

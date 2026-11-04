@@ -2,8 +2,13 @@ use crate::{
     fuse::{Config, GeoScribeFs, MountHandle},
     server::{error::FsError, sync::SyncHandler, write::WriteHandler},
 };
+use arc_swap::ArcSwap;
 use fuse_backend_rs::{
-    api::{BackendFileSystem, Vfs, VfsOptions, filesystem::Entry, server::Server},
+    api::{
+        BackendFileSystem, Vfs, VfsOptions,
+        filesystem::{Entry, FileSystem},
+        server::Server,
+    },
     async_runtime::Runtime,
     passthrough::{self, PassthroughFs},
     transport::{FuseDevTask, FuseSession},
@@ -11,32 +16,40 @@ use fuse_backend_rs::{
 use std::{
     any::Any,
     io::{self},
-    sync::{Arc, atomic::AtomicBool},
+    path::Path,
+    sync::{Arc, OnceLock, atomic::AtomicBool},
     time::Duration,
 };
 use tokio::sync::Mutex;
 
 impl GeoScribeFs {
-    pub fn new(cfg: Config) -> Result<Self, FsError> {
+    fn build_inner(volume: &Path) -> Result<PassthroughFs, FsError> {
         let pt_cfg = passthrough::Config {
-            root_dir: cfg.volume.to_string_lossy().to_string(),
+            root_dir: volume.to_string_lossy().to_string(),
             do_import: false,
             ..Default::default()
         };
         let inner = PassthroughFs::<()>::new(pt_cfg).map_err(io::Error::other)?;
-        inner.import().map_err(io::Error::other)?;
+        Ok(inner)
+    }
 
-        let mut session = FuseSession::new(&cfg.volume, "geoscribefs", "", false)?;
-        session.mount().map_err(io::Error::other)?;
+    pub fn new(cfg: Config) -> Result<Self, FsError> {
+        let inner = Self::build_inner(&cfg.volume)?;
+        let session = FuseSession::new(&cfg.volume, "geoscribefs", "", false)?;
 
-        Ok(Self {
-            inner,
+        let result = Self {
+            inner: ArcSwap::from_pointee(inner),
             mountpoint: session.mountpoint().to_path_buf(),
             session: std::sync::Mutex::new(session),
             manager: cfg.manager,
             detached: Mutex::new(false),
             volume_name: cfg.volume_name,
-        })
+            fs_opts: OnceLock::new(),
+        };
+
+        result.mount()?;
+
+        Ok(result)
     }
 
     /// Mounts the filesystem and blocks the current thread to process FUSE requests.
@@ -117,22 +130,38 @@ impl GeoScribeFs {
     /// Sync the data before reading.
     pub async fn sync_before_read(&self) -> Result<(), FsError> {
         // Simplest version is to sync regardless if we really need to, so we just trigger a sync
-        let synced = self.manager.sync(self).await?;
-        if synced {
-            self.inner.import()?;
-        }
+        self.manager.sync(self).await?;
         Ok(())
     }
 
     pub fn umount(&self) -> Result<(), FsError> {
-        tracing::trace!(volume_name = self.volume_name, "Unmounting volume");
-        self.session.lock()?.umount().map_err(|e| e.into())
+        tracing::trace!(mountpoint = ?self.mountpoint, "Unmounting volume");
+        self.session.lock()?.umount()?;
+        Ok(())
+    }
+
+    /// Unmount and release any opened file handle
+    pub fn detach(&self) -> Result<(), FsError> {
+        self.umount()?;
+        self.inner
+            .store(Arc::new(Self::build_inner(&self.mountpoint)?));
+        Ok(())
+    }
+
+    pub fn mount(&self) -> Result<(), FsError> {
+        let inner = self.inner.load();
+        inner.import()?;
+        if let Some(fs_opts) = self.fs_opts.get() {
+            inner.init(*fs_opts)?;
+        }
+        self.session.lock()?.mount()?;
+        Ok(())
     }
 }
 
 impl BackendFileSystem for GeoScribeFs {
     fn mount(&self) -> io::Result<(Entry, u64)> {
-        self.inner.mount()
+        self.inner.load().mount()
     }
 
     fn as_any(&self) -> &dyn Any {

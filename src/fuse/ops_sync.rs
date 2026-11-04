@@ -1,7 +1,7 @@
 use fuse_backend_rs::abi::fuse_abi::FsOptions;
 use fuse_backend_rs::api::filesystem::{
-    Context, DirEntry, Entry, FileLock, FileSystem, GetxattrReply, IoctlData, ListxattrReply,
-    OpenOptions, ZeroCopyReader, ZeroCopyWriter,
+    Context, DirEntry, Entry, FileLock, FileSystem, GetxattrReply, ListxattrReply, OpenOptions,
+    ZeroCopyReader, ZeroCopyWriter,
 };
 use fuse_backend_rs::passthrough::PassthroughFs;
 use std::ffi::CStr;
@@ -13,6 +13,13 @@ impl FileSystem for GeoScribeFs {
     type Inode = <PassthroughFs as FileSystem>::Inode;
     type Handle = <PassthroughFs as FileSystem>::Handle;
 
+    fn init(&self, capable: FsOptions) -> std::io::Result<FsOptions> {
+        self.fs_opts
+            .set(capable)
+            .expect("init called more than once");
+        self.inner.load().init(capable)
+    }
+
     forward_to_inner! {
         fn read(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, w: &mut dyn ZeroCopyWriter, size: u32, offset: u64, lock_owner: Option<u64>, flags: u32) -> std::io::Result<usize>;
         fn write(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, r: &mut dyn ZeroCopyReader, size: u32, offset: u64, lock_owner: Option<u64>, delayed_write: bool, flags: u32, fuse_flags: u32) -> std::io::Result<usize>;
@@ -21,11 +28,9 @@ impl FileSystem for GeoScribeFs {
         fn getlk(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, owner: u64, lock: FileLock, flags: u32) -> std::io::Result<FileLock>;
         fn setlk(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, owner: u64, lock: FileLock, flags: u32) -> std::io::Result<()>;
         fn setlkw(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, owner: u64, lock: FileLock, flags: u32) -> std::io::Result<()>;
-        fn ioctl(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, flags: u32, cmd: u32, data: IoctlData, out_size: u32) -> std::io::Result<IoctlData<'_>>;
     }
 
     forward_to_inner_full_trace! {
-        fn init(&self, capable: FsOptions) -> std::io::Result<FsOptions>;
         fn destroy(&self);
         fn lookup(&self, ctx: &Context, parent: Self::Inode, name: &CStr) -> std::io::Result<Entry>;
         fn forget(&self, ctx: &Context, inode: Self::Inode, count: u64);

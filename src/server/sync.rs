@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 
 #[tonic::async_trait]
 pub trait SyncHandler {
-    async fn sync(&self, fs: &GeoScribeFs) -> Result<bool, FsError>;
+    async fn sync(&self, fs: &GeoScribeFs) -> Result<(), FsError>;
 }
 
 async fn download_latest_remote_snapshot(
@@ -40,16 +40,20 @@ async fn download_latest_remote_snapshot(
 
 #[tonic::async_trait]
 impl SyncHandler for GeoScribeFsManager {
-    async fn sync(&self, fs: &GeoScribeFs) -> Result<bool, FsError> {
+    async fn sync(&self, fs: &GeoScribeFs) -> Result<(), FsError> {
         let volume = self.get_volume(&fs.volume_name)?;
         let owner = volume.owner;
         if owner == self.self_addr {
             // We are the owner, no need to sync
-            return Ok(false);
+            return Ok(());
         }
 
+        tracing::trace!(volume_name = %fs.volume_name, "Start sync");
         let manager = self.get_volume_manager(&fs.volume_name)?;
         let client = GeoScribeClient::connect(owner, self.token.clone()).await?;
+
+        // Detach the mount so that we don't keep any opened file that could prevent restore
+        fs.detach()?;
         download_latest_remote_snapshot(manager.as_ref(), client).await?;
         // Get the latest snapshot (the one we just downloaded) and restore it
         let snapshots = manager.list_snapshots().await?;
@@ -57,11 +61,10 @@ impl SyncHandler for GeoScribeFsManager {
             .last()
             .ok_or_else(|| FsError::NoSnapshotFound(fs.volume_name.to_string()))?;
 
-        // First unmount the fuse fs to be able to restore
-        fs.umount()?;
-
         manager.restore_snapshot(latest_snapshot).await?;
+        // Remount after restore since we detached before
+        fs.mount()?;
 
-        Ok(true)
+        Ok(())
     }
 }

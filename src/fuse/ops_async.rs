@@ -28,7 +28,10 @@ impl AsyncFileSystem for GeoScribeFs {
         if is_write {
             self.check_write_auth_and_detach().await?;
         }
-        self.inner.async_open(ctx, inode, flags, fuse_flags).await
+        self.inner
+            .load_full()
+            .async_open(ctx, inode, flags, fuse_flags)
+            .await
     }
 
     async fn async_create(
@@ -39,7 +42,10 @@ impl AsyncFileSystem for GeoScribeFs {
         args: CreateIn,
     ) -> Result<(Entry, Option<Self::Handle>, OpenOptions)> {
         self.check_write_auth_and_detach().await?;
-        self.inner.async_create(ctx, parent, name, args).await
+        self.inner
+            .load_full()
+            .async_create(ctx, parent, name, args)
+            .await
     }
 
     async fn async_write(
@@ -57,6 +63,7 @@ impl AsyncFileSystem for GeoScribeFs {
     ) -> io::Result<usize> {
         self.check_write_auth_and_detach().await?;
         self.inner
+            .load_full()
             .async_write(
                 ctx,
                 inode,
@@ -85,6 +92,7 @@ impl AsyncFileSystem for GeoScribeFs {
             self.check_write_auth_and_detach().await?;
         }
         self.inner
+            .load_full()
             .async_setattr(_ctx, inode, attr, handle, valid)
             .await
     }
@@ -97,7 +105,7 @@ impl AsyncFileSystem for GeoScribeFs {
         name: &CStr,
     ) -> io::Result<Entry> {
         self.sync_before_read().await?;
-        self.inner.async_lookup(ctx, parent, name).await
+        self.inner.load_full().async_lookup(ctx, parent, name).await
     }
 
     async fn async_getattr(
@@ -106,7 +114,10 @@ impl AsyncFileSystem for GeoScribeFs {
         inode: Self::Inode,
         handle: Option<Self::Handle>,
     ) -> io::Result<(stat64, Duration)> {
-        self.inner.async_getattr(ctx, inode, handle).await
+        self.inner
+            .load_full()
+            .async_getattr(ctx, inode, handle)
+            .await
     }
 
     async fn async_read(
@@ -121,6 +132,7 @@ impl AsyncFileSystem for GeoScribeFs {
         flags: u32,
     ) -> io::Result<usize> {
         self.inner
+            .load_full()
             .async_read(ctx, inode, handle, w, size, offset, lock_owner, flags)
             .await
     }
@@ -132,7 +144,10 @@ impl AsyncFileSystem for GeoScribeFs {
         datasync: bool,
         handle: Self::Handle,
     ) -> io::Result<()> {
-        self.inner.async_fsync(ctx, inode, datasync, handle).await
+        self.inner
+            .load_full()
+            .async_fsync(ctx, inode, datasync, handle)
+            .await
     }
 
     async fn async_fallocate(
@@ -145,6 +160,7 @@ impl AsyncFileSystem for GeoScribeFs {
         length: u64,
     ) -> io::Result<()> {
         self.inner
+            .load_full()
             .async_fallocate(ctx, inode, handle, mode, offset, length)
             .await
     }
@@ -157,6 +173,7 @@ impl AsyncFileSystem for GeoScribeFs {
         handle: Self::Handle,
     ) -> io::Result<()> {
         self.inner
+            .load_full()
             .async_fsyncdir(ctx, inode, datasync, handle)
             .await
     }

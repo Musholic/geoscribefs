@@ -95,7 +95,9 @@ async fn test_fuse_write(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: Fs
 // Spawn two servers, write on the first and read on the second
 #[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 #[rstest]
-async fn test_fuse_write_server1_then_read_server2(#[values(FsBackend::Btrfs)] backend: FsBackend) {
+async fn test_fuse_write_server1_then_read_server2(
+    #[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: FsBackend,
+) {
     // Start the two servers, each with their volume of the same name
     let addr = get_random_addr();
     let addr2 = get_random_addr();

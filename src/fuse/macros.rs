@@ -4,7 +4,7 @@ macro_rules! forward_to_inner_full_trace {
         $(
             fn $name(&self $(, $arg : $arg_ty )*) $(-> $ret)? {
                 tracing::trace!(volume = %self.volume_name, "Calling {} with args: {:?}", stringify!($name), ($(&$arg),*));
-                self.inner.$name($($arg),*)
+                self.inner.load().$name($($arg),*)
             }
         )*
     };
@@ -15,7 +15,7 @@ macro_rules! forward_to_inner {
         $(
             fn $name(&self $(, $arg : $arg_ty )*) $(-> $ret)? {
                 tracing::trace!(volume = %self.volume_name, "Calling {}", stringify!($name));
-                self.inner.$name($($arg),*)
+                self.inner.load().$name($($arg),*)
             }
         )*
     };
