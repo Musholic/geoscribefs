@@ -8,6 +8,12 @@ use geoscribefs::volume_manager::FsBackend;
 pub trait TempVolume {
     fn delete(&mut self);
     fn path(&self) -> &Path;
+    fn volume_name(&self) -> &str {
+        self.path()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+    }
 }
 
 pub struct TempVolumeGuard {
@@ -25,9 +31,20 @@ impl Drop for TempVolumeGuard {
 }
 
 pub fn create_temp_volume(backend: FsBackend) -> TempVolumeGuard {
+    let volume_name = format!(
+        "vol_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    create_temp_volume_named(backend, &volume_name)
+}
+
+pub fn create_temp_volume_named(backend: FsBackend, volume_name: &str) -> TempVolumeGuard {
     let volume: Box<dyn TempVolume> = match backend {
-        FsBackend::Btrfs => Box::new(BtrfsTempVolume::create()),
-        FsBackend::Zfs => Box::new(ZfsTempVolume::create()),
+        FsBackend::Btrfs => Box::new(BtrfsTempVolume::create(volume_name)),
+        FsBackend::Zfs => Box::new(ZfsTempVolume::create(volume_name)),
     };
     TempVolumeGuard { volume }
 }
@@ -37,20 +54,22 @@ pub struct BtrfsTempVolume {
 }
 
 impl BtrfsTempVolume {
-    fn create() -> Self {
-        let base_volume_path = Path::new("/var/lib/geoscribefs/btrfs");
-        let volume_name = format!(
-            "vol_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let volume_path = base_volume_path.join(&volume_name);
-        Command::new("btrfs")
+    fn create(volume_name: &str) -> Self {
+        let random_dir = format!("{:x}", rand::random::<u64>());
+        let base_volume_path = Path::new("/var/lib/geoscribefs/btrfs").join(random_dir);
+        std::fs::create_dir_all(&base_volume_path).expect("Failed to create base volume directory");
+        let volume_path = base_volume_path.join(volume_name);
+        let status = Command::new("btrfs")
             .args(["subvolume", "create", volume_path.to_str().unwrap()])
             .status()
             .expect("Failed to create subvolume");
+
+        assert!(
+            status.success(),
+            "Failed to create subvolume with path {}: {}",
+            volume_path.to_string_lossy(),
+            status
+        );
 
         Self { volume_path }
     }
@@ -73,18 +92,12 @@ pub struct ZfsTempVolume {
 }
 
 impl ZfsTempVolume {
-    fn create() -> Self {
-        let volume_name = format!(
-            "vol_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
+    fn create(volume_name: &str) -> Self {
         let zpool_name = "zpool_geoscribefs".to_string();
-        let dataset = format!("{}/{}", zpool_name, volume_name);
+        let random_parent_dataset = format!("{:x}", rand::random::<u64>());
+        let dataset = format!("{}/{}/{}", zpool_name, random_parent_dataset, volume_name);
         Command::new("zfs")
-            .args(["create", &dataset])
+            .args(["create", "-p", &dataset])
             .status()
             .expect("Failed to create ZFS volume");
 

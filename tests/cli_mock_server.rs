@@ -1,17 +1,19 @@
 mod common;
 
-use std::net::SocketAddr;
-
+use crate::common::{TestResult, get_random_addr};
 use clap::Parser;
 use geoscribefs::{
     cli::{Cli, run_cli},
     proto::{
         AskWriteRequest, AskWriteResponse, ListSnapshotsRequest, ListSnapshotsResponse,
-        RestoreRequest, RestoreResponse, SnapshotRequest, SnapshotResponse, StatusRequest,
-        StatusResponse, WriteRequest, WriteResponse,
+        RestoreRequest, RestoreResponse, SendSnapshotRequest, SnapshotChunk, SnapshotRequest,
+        SnapshotResponse, StatusRequest, StatusResponse, WriteRequest, WriteResponse,
         geo_scribe_fs_service_server::{GeoScribeFsService, GeoScribeFsServiceServer},
     },
 };
+use std::{net::SocketAddr, pin::Pin};
+use test_log::test;
+use tokio_stream::Stream;
 use tonic::{Request, Response, Status, transport::Server};
 
 #[derive(Default)]
@@ -19,6 +21,9 @@ struct MockGeoScribeFsServer;
 
 #[tonic::async_trait]
 impl GeoScribeFsService for MockGeoScribeFsServer {
+    type SendSnapshotStream =
+        Pin<Box<dyn Stream<Item = Result<SnapshotChunk, Status>> + Send + 'static>>;
+
     async fn status(&self, _: Request<StatusRequest>) -> Result<Response<StatusResponse>, Status> {
         Ok(Response::new(StatusResponse {
             status: "status".to_string(),
@@ -61,11 +66,14 @@ impl GeoScribeFsService for MockGeoScribeFsServer {
             snapshots: vec!["test".to_string(), "test2".to_string()],
         }))
     }
+
+    async fn send_snapshot(
+        &self,
+        _: Request<SendSnapshotRequest>,
+    ) -> Result<Response<Self::SendSnapshotStream>, Status> {
+        unimplemented!()
+    }
 }
-
-use test_log::test;
-
-use crate::common::get_random_addr;
 
 fn start_mock_server() -> String {
     let addr = get_random_addr();
@@ -83,7 +91,7 @@ fn start_mock_server() -> String {
 }
 
 #[test(tokio::test)]
-async fn test_cli_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_cli_snapshot() -> TestResult {
     let addr = start_mock_server();
     let cli = Cli::try_parse_from(vec![
         "geoscribefs",
@@ -106,7 +114,7 @@ async fn test_cli_snapshot() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test(tokio::test)]
-async fn test_cli_status() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_cli_status() -> TestResult {
     let addr = start_mock_server();
 
     let cli = Cli::try_parse_from(vec![
@@ -124,7 +132,7 @@ async fn test_cli_status() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test(tokio::test)]
-async fn test_cli_restore() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_cli_restore() -> TestResult {
     let addr = start_mock_server();
     let cli = Cli::try_parse_from(vec![
         "geoscribefs",
@@ -149,7 +157,7 @@ async fn test_cli_restore() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test(tokio::test)]
-async fn test_cli_list_snapshots() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_cli_list_snapshots() -> TestResult {
     let addr = start_mock_server();
     let cli = Cli::try_parse_from(vec![
         "geoscribefs",

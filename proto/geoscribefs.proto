@@ -8,6 +8,7 @@ service GeoScribeFsService {
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
   rpc Restore(RestoreRequest) returns (RestoreResponse);
   rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+  rpc SendSnapshot(SendSnapshotRequest) returns (stream SnapshotChunk);
 }
 
 message StatusRequest {}
@@ -56,4 +57,12 @@ message ListSnapshotsRequest {
 
 message ListSnapshotsResponse {
   repeated string snapshots = 1;
+}
+
+message SendSnapshotRequest {
+  string volume_name = 1;
+}
+
+message SnapshotChunk {
+  bytes data = 1;
 }

@@ -1,15 +1,16 @@
-use tonic::{Response, Status};
-
-use crate::{proto::StatusResponse, server::MyGeoScribeFsService};
+use crate::{
+    proto::StatusResponse,
+    server::{GeoScribeFsManager, error::FsError},
+};
 
 #[tonic::async_trait]
 pub trait StatusHandler {
-    async fn handle_status(&self) -> Result<Response<StatusResponse>, Status>;
+    async fn handle_status(&self) -> Result<StatusResponse, FsError>;
 }
 
 #[tonic::async_trait]
-impl StatusHandler for MyGeoScribeFsService {
-    async fn handle_status(&self) -> Result<Response<StatusResponse>, Status> {
+impl StatusHandler for GeoScribeFsManager {
+    async fn handle_status(&self) -> Result<StatusResponse, FsError> {
         let mut status = format!("Addr: {}\n", self.self_addr);
         status.push_str("Connected to:\n");
         for peer in &self.peers {
@@ -19,10 +20,11 @@ impl StatusHandler for MyGeoScribeFsService {
         let volumes = self
             .volumes
             .read()
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| FsError::LockPoisoned(e.to_string()))?;
+
         for (k, v) in volumes.iter() {
-            status.push_str(&format!("- {}: {}\n", k, v));
+            status.push_str(&format!("- {}: {}\n", k, v.owner));
         }
-        Ok(Response::new(StatusResponse { status }))
+        Ok(StatusResponse { status })
     }
 }

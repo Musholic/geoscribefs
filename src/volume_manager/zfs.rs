@@ -1,3 +1,10 @@
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
+
+use tokio::process::{Child, Command};
+
 use crate::{
     fuse,
     volume_manager::{StorageError, VolumeManager},
@@ -9,9 +16,9 @@ pub struct ZfsVolumeManager {
 }
 
 /// Resolve the mountpoint to a ZFS dataset name
-fn get_dataset_name(mountpoint: &str) -> Result<String, StorageError> {
+fn get_dataset_name(mountpoint: &Path) -> Result<String, StorageError> {
     let output = std::process::Command::new("zfs")
-        .args(["list", "-H", "-o", "name", mountpoint])
+        .args(["list", "-H", "-o", "name", &mountpoint.to_string_lossy()])
         .output()
         .map_err(|e| StorageError::CommandFailed(format!("Failed to execute zfs list: {}", e)))?;
 
@@ -45,6 +52,10 @@ impl ZfsVolumeManager {
     }
 }
 
+fn get_snapshot_name(dataset_name: &str, date: &str) -> String {
+    format!("{}@{}", dataset_name, date)
+}
+
 #[tonic::async_trait]
 impl VolumeManager for ZfsVolumeManager {
     async fn create_snapshot(&self, date: &str) -> Result<(), StorageError> {
@@ -70,7 +81,7 @@ impl VolumeManager for ZfsVolumeManager {
     }
 
     async fn restore_snapshot(&self, date: &str) -> Result<(), StorageError> {
-        let snapshot_name = format!("{}@{}", self.dataset_name, date);
+        let snapshot_name = get_snapshot_name(&self.dataset_name, date);
         tracing::debug!(
             "Restoring ZFS dataset: {} from snapshot {}",
             self.dataset_name,
@@ -119,5 +130,39 @@ impl VolumeManager for ZfsVolumeManager {
             .collect();
 
         Ok(snapshots)
+    }
+
+    fn receive_snapshot_process(&self) -> io::Result<Child> {
+        tracing::debug!(
+            dataset_name = ?self.dataset_name,
+            "Start zfs receive process"
+        );
+        Command::new("zfs")
+            .args(["receive", "-F", &self.dataset_name])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+    }
+
+    fn send_snapshot_process(&self, snapshot_date: &str) -> io::Result<Child> {
+        let snapshot_name = get_snapshot_name(&self.dataset_name, snapshot_date);
+        tracing::debug!(
+            dataset_name = ?self.dataset_name,
+            snapshot_name = ?snapshot_name,
+            "Start zfs send process"
+        );
+
+        Command::new("zfs")
+            .arg("send")
+            .arg(&snapshot_name)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+    }
+
+    fn volume_path(&self) -> PathBuf {
+        self.mount.mountpoint.clone()
+    }
+
+    fn volume_name(&self) -> String {
+        self.mount.volume_name.clone()
     }
 }

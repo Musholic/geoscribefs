@@ -1,4 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    process::Stdio,
+};
+
+use tokio::process::{Child, Command};
 
 use crate::{
     fuse,
@@ -43,16 +49,16 @@ impl VolumeManager for BtrfsVolumeManager {
         let snapshot_path = get_snapshot_path(&self.snapshots_path, date)?;
 
         tracing::trace!(
-            "Snapshotting volume: {} to {}",
-            self.mount.mountpoint,
-            snapshot_path
+            mountpoint = ?self.mount.mountpoint,
+            snapshot_path = ?snapshot_path,
+            "Snapshotting volume",
         );
         let status = std::process::Command::new("btrfs")
             .args([
                 "subvolume",
                 "snapshot",
                 "-r",
-                &self.mount.mountpoint,
+                &self.mount.mountpoint.to_string_lossy(),
                 &snapshot_path,
             ])
             .status()?;
@@ -70,13 +76,17 @@ impl VolumeManager for BtrfsVolumeManager {
         let snapshot_path = get_snapshot_path(&self.snapshots_path, date)?;
         tracing::debug!(
             "Restoring volume: {} from {}",
-            self.mount.mountpoint,
+            &self.mount.mountpoint.to_string_lossy(),
             snapshot_path
         );
 
         // To restore, we delete the existing volume and snapshot the backup back
         let delete_status = std::process::Command::new("btrfs")
-            .args(["subvolume", "delete", &self.mount.mountpoint])
+            .args([
+                "subvolume",
+                "delete",
+                &self.mount.mountpoint.to_string_lossy(),
+            ])
             .status()?;
 
         if !delete_status.success() {
@@ -90,7 +100,7 @@ impl VolumeManager for BtrfsVolumeManager {
                 "subvolume",
                 "snapshot",
                 &snapshot_path,
-                &self.mount.mountpoint,
+                &self.mount.mountpoint.to_string_lossy(),
             ])
             .status()?;
 
@@ -114,5 +124,38 @@ impl VolumeManager for BtrfsVolumeManager {
             .unwrap_or_default();
 
         Ok(snapshots)
+    }
+
+    fn receive_snapshot_process(&self) -> io::Result<Child> {
+        tracing::debug!(
+            snapshots_path = ?self.snapshots_path,
+            "Start btrfs receive process"
+        );
+        Command::new("btrfs")
+            .args(["receive", &self.snapshots_path.to_string_lossy()])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+    }
+
+    fn send_snapshot_process(&self, snapshot_date: &str) -> io::Result<Child> {
+        let snapshot_path = get_snapshot_path(&self.snapshots_path, snapshot_date)?;
+        tracing::debug!(
+            snapshots_path = ?self.snapshots_path,
+            "Start btrfs send process"
+        );
+
+        Command::new("btrfs")
+            .arg("send")
+            .arg(&snapshot_path)
+            .stdout(Stdio::piped())
+            .spawn()
+    }
+
+    fn volume_path(&self) -> PathBuf {
+        self.mount.mountpoint.clone()
+    }
+
+    fn volume_name(&self) -> String {
+        self.mount.volume_name.clone()
     }
 }

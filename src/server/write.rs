@@ -1,36 +1,32 @@
-use tonic::{Request, Response, Status};
+use tonic::{Request, Status};
 
 use crate::{
     proto::{
         AskWriteRequest, AskWriteResponse, WriteResponse,
         geo_scribe_fs_service_client::GeoScribeFsServiceClient,
     },
-    server::MyGeoScribeFsService,
+    server::{GeoScribeFsManager, Volume, error::FsError},
 };
 
 #[tonic::async_trait]
 pub trait WriteHandler {
-    async fn handle_write(&self, volume_name: &str) -> Result<Response<WriteResponse>, Status>;
+    async fn handle_write(&self, volume_name: &str) -> Result<WriteResponse, FsError>;
     async fn handle_ask_write(
         &self,
         volume_name: &str,
         remote_addr: &str,
-    ) -> Result<Response<AskWriteResponse>, Status>;
+    ) -> Result<AskWriteResponse, FsError>;
 }
 
 #[tonic::async_trait]
-impl WriteHandler for MyGeoScribeFsService {
-    async fn handle_write(&self, volume_name: &str) -> Result<Response<WriteResponse>, Status> {
+impl WriteHandler for GeoScribeFsManager {
+    async fn handle_write(&self, volume_name: &str) -> Result<WriteResponse, FsError> {
         tracing::debug!("Writing to volume {}", volume_name);
 
         for peer in &self.peers {
-            let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", peer))
-                .map_err(|e| Status::internal(e.to_string()))?
+            let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", peer))?
                 .connect()
-                .await
-                .map_err(|e| {
-                    Status::internal(format!("Failed to connect to peer {}: {}", peer, e))
-                })?;
+                .await?;
 
             let token = self.token.clone();
 
@@ -54,38 +50,44 @@ impl WriteHandler for MyGeoScribeFsService {
                 volume_name: volume_name.to_string(),
             });
 
-            let response = client
-                .ask_write(ask_request)
-                .await
-                .map_err(|e| Status::internal(format!("Peer {} error: {}", peer, e)))?;
+            let response = client.ask_write(ask_request).await?.into_inner();
 
-            if !response.into_inner().can_write {
-                return Err(Status::already_exists(format!(
-                    "Peer {} denied write for volume {}",
-                    peer, volume_name
-                )));
+            if !response.can_write {
+                return Err(FsError::DeniedWrite(peer.clone(), volume_name.to_string()));
             }
         }
 
         tracing::debug!("Volume {} can be written to", volume_name);
-        self.volumes
+        let mut volumes = self
+            .volumes
             .write()
-            .map_err(|e| Status::internal(e.to_string()))?
-            .insert(volume_name.to_string(), self.self_addr.clone());
+            .map_err(|e| FsError::LockPoisoned(e.to_string()))?;
 
-        Ok(Response::new(WriteResponse { success: true }))
+        let volume = volumes
+            .get_mut(volume_name)
+            .ok_or_else(|| FsError::not_found(volume_name))?;
+
+        volume.owner = self.self_addr.clone();
+
+        Ok(WriteResponse { success: true })
     }
 
     async fn handle_ask_write(
         &self,
         volume_name: &str,
         remote_addr: &str,
-    ) -> Result<Response<AskWriteResponse>, Status> {
+    ) -> Result<AskWriteResponse, FsError> {
+        let new_owner = remote_addr.to_string();
         self.volumes
             .write()
-            .map_err(|e| Status::internal(e.to_string()))?
-            .insert(volume_name.to_string(), remote_addr.to_string());
+            .map_err(|e| FsError::LockPoisoned(e.to_string()))?
+            .entry(volume_name.to_string())
+            .and_modify(|v| v.owner = new_owner.clone())
+            .or_insert(Volume {
+                owner: new_owner,
+                manager: None,
+            });
 
-        Ok(Response::new(AskWriteResponse { can_write: true }))
+        Ok(AskWriteResponse { can_write: true })
     }
 }

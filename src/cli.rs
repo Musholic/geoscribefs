@@ -44,7 +44,7 @@ enum Commands {
     },
 }
 
-pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error>> {
+pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let addr = cli.addr;
     let token = cli.token;
 

@@ -42,7 +42,9 @@ pub async fn start_server(config: ServerConfig) {
     tracing::debug!("Starting server at {}", config.addr);
     let addr = &config.addr.clone();
     tokio::spawn(async {
-        let _ = run_server(config).await;
+        if let Err(e) = run_server(config).await {
+            tracing::error!("Server error: {}", e);
+        }
     });
 
     tracing::debug!("Waiting for server...");
@@ -77,3 +79,5 @@ pub fn get_random_addr() -> String {
     let port = listener.local_addr().unwrap().port();
     format!("127.0.0.1:{}", port)
 }
+
+pub type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
