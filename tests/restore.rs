@@ -19,7 +19,7 @@ async fn test_restore(
 
     let addr = get_random_addr();
 
-    start_server(ServerConfig {
+    let _server = start_server(ServerConfig {
         addr: addr.clone(),
         volume_paths: vec![volume_path.clone()],
         ..Default::default()

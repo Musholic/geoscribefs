@@ -18,6 +18,7 @@ use std::{
     pin::Pin,
     sync::{Arc, RwLock},
 };
+use tokio::sync::oneshot::Receiver;
 use tokio_stream::{Stream, StreamExt};
 use tokio_util::io::ReaderStream;
 use tonic::{Request, Response, Status, service::Interceptor, transport::Server};
@@ -192,6 +193,7 @@ impl Interceptor for AuthInterceptor {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerConfig {
     pub addr: String,
     pub token: String,
@@ -212,7 +214,9 @@ impl Default for ServerConfig {
 
 pub async fn run_server(
     config: ServerConfig,
+    shutdown_rx: Option<Receiver<()>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing::trace!(config = ?config, "Starting server");
     let manager = Arc::new(GeoScribeFsManager::new(
         config.addr.clone(),
         config.peers.clone(),
@@ -232,7 +236,7 @@ pub async fn run_server(
             volume_name,
             manager: manager.clone(),
         };
-        let volume_manager = volume_manager::mount_and_get(cfg)?;
+        let volume_manager = volume_manager::mount_and_get(cfg).await?;
         manager.register_volume(volume_manager)?;
     }
 
@@ -252,7 +256,32 @@ pub async fn run_server(
             service,
             interceptor,
         ))
-        .serve(socket_addr)
+        .serve_with_shutdown(socket_addr, shutdown_signal(shutdown_rx))
         .await?;
+
+    tracing::info!("Server exited");
     Ok(())
+}
+
+/// Completes when the process is asked to stop.
+async fn shutdown_signal(shutdown_rx: Option<Receiver<()>>) {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut terminate =
+        signal(SignalKind::terminate()).expect("failed to register the SIGTERM handler");
+    let mut interrupt =
+        signal(SignalKind::interrupt()).expect("failed to register the SIGINT handler");
+
+    let external_shutdown = async {
+        match shutdown_rx {
+            Some(rx) => rx.await.ok(),
+            None => std::future::pending::<Option<()>>().await,
+        }
+    };
+
+    tokio::select! {
+        _ = terminate.recv() => tracing::debug!("Received SIGTERM, shutting down"),
+        _ = interrupt.recv() => tracing::debug!("Received SIGINT, shutting down"),
+        _ = external_shutdown => tracing::debug!("Received shutdown signal, shutting down"),
+    }
 }

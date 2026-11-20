@@ -1,13 +1,19 @@
 // Test utilities are not meant to be used by all tests
 #![allow(dead_code)]
 
+pub mod process;
 pub mod temp_volume;
 
 use std::fs;
 use std::time::Duration;
 
 use geoscribefs::server::{ServerConfig, run_server};
-use tokio::time::{sleep, timeout};
+use tokio::sync::oneshot;
+use tokio::{
+    runtime::Handle,
+    task::{JoinHandle, block_in_place},
+    time::{sleep, timeout},
+};
 use tonic::transport::Endpoint;
 
 pub fn is_fuse_mounted(path: &std::path::Path) -> bool {
@@ -18,6 +24,18 @@ pub fn is_fuse_mounted(path: &std::path::Path) -> bool {
                 && parts[1] == path.to_str().unwrap_or("")
                 && parts[0] == "geoscribefs"
             {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub fn is_fuse_mounted_by_volume_name(volume_name: &str) -> bool {
+    if let Ok(mounts) = fs::read_to_string("/proc/mounts") {
+        for line in mounts.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 && parts[1].contains(volume_name) && parts[0] == "geoscribefs" {
                 return true;
             }
         }
@@ -38,11 +56,35 @@ pub async fn wait_for_fuse_mount(path: &std::path::Path) {
     .expect("Fuse mount should have been created")
 }
 
-pub async fn start_server(config: ServerConfig) {
+#[must_use]
+pub struct ServerGuard {
+    addr: String,
+    shutdown: Option<oneshot::Sender<()>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Drop for ServerGuard {
+    fn drop(&mut self) {
+        tracing::info!(addr = self.addr, "Stopping server...");
+        if let Some(shutdown) = self.shutdown.take()
+            && let Some(handle) = self.handle.take()
+        {
+            let _ = shutdown.send(());
+            if let Err(error) = block_in_place(|| Handle::current().block_on(handle)) {
+                tracing::error!(%error, "Error while stopping server")
+            } else {
+                tracing::info!(addr = self.addr, "Server stopped");
+            }
+        }
+    }
+}
+
+pub async fn start_server(config: ServerConfig) -> ServerGuard {
     tracing::debug!("Starting server at {}", config.addr);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let addr = &config.addr.clone();
-    tokio::spawn(async {
-        if let Err(e) = run_server(config).await {
+    let handle = tokio::spawn(async {
+        if let Err(e) = run_server(config, Some(shutdown_rx)).await {
             tracing::error!("Server error: {}", e);
         }
     });
@@ -50,6 +92,12 @@ pub async fn start_server(config: ServerConfig) {
     tracing::debug!("Waiting for server...");
     wait_for_server(addr).await;
     tracing::debug!("Server started successfully");
+
+    ServerGuard {
+        addr: addr.to_string(),
+        shutdown: Some(shutdown_tx),
+        handle: Some(handle),
+    }
 }
 
 pub async fn wait_for_server(addr: &str) {

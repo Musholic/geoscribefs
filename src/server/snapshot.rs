@@ -61,10 +61,13 @@ impl SnapshotHandler for GeoScribeFsManager {
     }
 
     async fn handle_send_snapshot(&self, volume_name: &str) -> Result<ChildStdout, FsError> {
+        let manager = self.get_volume_manager(volume_name)?;
+        let snapshots = manager.list_snapshots().await?;
+        let last_snapshot: Option<&str> = snapshots.last().map(|s| s.as_str());
+
         let snapshot_date = self.handle_snapshot(volume_name).await?.date;
 
-        let manager = self.get_volume_manager(volume_name)?;
-        let mut send_proc = manager.send_snapshot_process(&snapshot_date)?;
+        let mut send_proc = manager.send_snapshot_process(&snapshot_date, last_snapshot)?;
 
         let stdout = send_proc
             .stdout

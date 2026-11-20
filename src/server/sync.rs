@@ -53,7 +53,8 @@ impl SyncHandler for GeoScribeFsManager {
         let client = GeoScribeClient::connect(owner, self.token.clone()).await?;
 
         // Detach the mount so that we don't keep any opened file that could prevent restore
-        fs.detach()?;
+        fs.park().await?;
+        fs.detach().await?;
         download_latest_remote_snapshot(manager.as_ref(), client).await?;
         // Get the latest snapshot (the one we just downloaded) and restore it
         let snapshots = manager.list_snapshots().await?;
@@ -62,8 +63,9 @@ impl SyncHandler for GeoScribeFsManager {
             .ok_or_else(|| FsError::NoSnapshotFound(fs.volume_name.to_string()))?;
 
         manager.restore_snapshot(latest_snapshot).await?;
-        // Remount after restore since we detached before
-        fs.mount()?;
+        // Attach back after restore since we detached before
+        fs.attach().await?;
+        fs.unpark().await?;
 
         Ok(())
     }
