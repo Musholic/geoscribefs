@@ -1,0 +1,7 @@
+{
+  "rust-analyzer.runnables.extraEnv": {
+    "RUST_LOG": "debug,h2=info,geoscribefs=trace",
+    "RUST_LOG_SPAN_EVENTS": "new",
+    "RUST_BACKTRACE": "0",
+  },
+}

@@ -78,15 +78,20 @@ impl WriteHandler for GeoScribeFsManager {
         remote_addr: &str,
     ) -> Result<AskWriteResponse, FsError> {
         let new_owner = remote_addr.to_string();
+
         self.volumes
             .write()
             .map_err(|e| FsError::LockPoisoned(e.to_string()))?
             .entry(volume_name.to_string())
-            .and_modify(|v| v.owner = new_owner.clone())
+            .and_modify(|volume| volume.owner = new_owner.clone())
             .or_insert(Volume {
                 owner: new_owner,
                 manager: None,
             });
+
+        if let Ok(m) = self.get_volume_manager(volume_name) {
+            m.mount().await?;
+        }
 
         Ok(AskWriteResponse { can_write: true })
     }

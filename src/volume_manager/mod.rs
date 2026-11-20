@@ -9,7 +9,7 @@ use std::{
 
 use nix::sys::statfs::{FsType, statfs};
 use thiserror::Error;
-use tokio::process::Child;
+use tokio::{process::Child, time::error::Elapsed};
 
 use crate::{
     fuse::{self, GeoScribeFs},
@@ -21,6 +21,8 @@ use crate::{
 pub enum StorageError {
     #[error("Failed to execute storage command: {0}")]
     CommandFailed(String),
+    #[error("Timeout after {0} when trying to execute storage command: {1}")]
+    CommandTimeout(Elapsed, String),
     #[error("Volume or snapshot not found: {0}")]
     NotFound(String),
     #[error("The filesystem type is not supported or detected for path: {0}")]
@@ -50,11 +52,13 @@ pub trait VolumeManager: Send + Sync {
 
     fn receive_snapshot_process(&self) -> io::Result<Child>;
 
-    fn send_snapshot_process(&self, snapshot_date: &str) -> io::Result<Child>;
+    fn send_snapshot_process(&self, snapshot_date: &str, base_snapshot_date: Option<&str>) -> io::Result<Child>;
 
     fn volume_path(&self) -> PathBuf;
 
     fn volume_name(&self) -> String;
+
+    async fn mount(&self) -> Result<(), FsError>;
 }
 
 #[derive(Clone, Copy)]
@@ -76,7 +80,7 @@ fn get_fs_backend(volume: &Path) -> Option<FsBackend> {
     }
 }
 
-pub fn mount_and_get(cfg: fuse::Config) -> Result<Arc<dyn VolumeManager>, StorageError> {
+pub async fn mount_and_get(cfg: fuse::Config) -> Result<Arc<dyn VolumeManager>, StorageError> {
     tracing::debug!(volume_path = ?cfg.volume, "Mounting volume");
     let volume = cfg.volume.clone();
 
@@ -84,10 +88,15 @@ pub fn mount_and_get(cfg: fuse::Config) -> Result<Arc<dyn VolumeManager>, Storag
     let backend = get_fs_backend(&volume)
         .ok_or_else(|| StorageError::FsNotSupported(volume.to_string_lossy().to_string()))?;
 
-    let mount = GeoScribeFs::new(cfg)?.start()?;
+    let mount = GeoScribeFs::new(cfg).await?.start().await?;
 
-    match backend {
-        FsBackend::Btrfs => Ok(Arc::new(BtrfsVolumeManager::new(mount)?)),
-        FsBackend::Zfs => Ok(Arc::new(ZfsVolumeManager::new(mount)?)),
-    }
+    let result: Arc<dyn VolumeManager> = match backend {
+        FsBackend::Btrfs => Arc::new(BtrfsVolumeManager::new(mount)?),
+        FsBackend::Zfs => Arc::new(ZfsVolumeManager::new(mount).await?),
+    };
+
+    // We can now overmount at the volume location
+    result.mount().await?;
+
+    Ok(result)
 }

@@ -8,6 +8,7 @@ use tokio::process::{Child, Command};
 
 use crate::{
     fuse,
+    server::error::FsError,
     volume_manager::{StorageError, VolumeManager},
 };
 
@@ -114,7 +115,7 @@ impl VolumeManager for BtrfsVolumeManager {
     }
 
     async fn list_snapshots(&self) -> Result<Vec<String>, StorageError> {
-        let snapshots = std::fs::read_dir(&self.snapshots_path)
+        let mut snapshots: Vec<String> = std::fs::read_dir(&self.snapshots_path)
             .map(|entries| {
                 entries
                     .flatten()
@@ -122,6 +123,8 @@ impl VolumeManager for BtrfsVolumeManager {
                     .collect()
             })
             .unwrap_or_default();
+
+        snapshots.sort();
 
         Ok(snapshots)
     }
@@ -137,18 +140,23 @@ impl VolumeManager for BtrfsVolumeManager {
             .spawn()
     }
 
-    fn send_snapshot_process(&self, snapshot_date: &str) -> io::Result<Child> {
+    fn send_snapshot_process(&self, snapshot_date: &str, base_snapshot_date: Option<&str>) -> io::Result<Child> {
         let snapshot_path = get_snapshot_path(&self.snapshots_path, snapshot_date)?;
+
+        let mut cmd = Command::new("btrfs");
+        cmd.arg("send").arg(&snapshot_path);
+
+        if let Some(base_snapshot_date) = base_snapshot_date {
+            let base_snapshot_path = get_snapshot_path(&self.snapshots_path, base_snapshot_date)?;
+            cmd.arg("-p").arg(&base_snapshot_path);
+        }
+
         tracing::debug!(
             snapshots_path = ?self.snapshots_path,
+            cmd = ?cmd,
             "Start btrfs send process"
         );
-
-        Command::new("btrfs")
-            .arg("send")
-            .arg(&snapshot_path)
-            .stdout(Stdio::piped())
-            .spawn()
+        cmd.stdout(Stdio::piped()).spawn()
     }
 
     fn volume_path(&self) -> PathBuf {
@@ -157,5 +165,9 @@ impl VolumeManager for BtrfsVolumeManager {
 
     fn volume_name(&self) -> String {
         self.mount.volume_name.clone()
+    }
+
+    async fn mount(&self) -> Result<(), FsError> {
+        self.mount.mount().await
     }
 }

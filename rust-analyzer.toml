@@ -1,0 +1,3 @@
+[workspace.symbol.search]
+scope = "workspace_and_dependencies"
+kind = "all_symbols"

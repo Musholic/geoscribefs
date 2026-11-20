@@ -13,6 +13,7 @@ impl FileSystem for GeoScribeFs {
     type Inode = <PassthroughFs as FileSystem>::Inode;
     type Handle = <PassthroughFs as FileSystem>::Handle;
 
+    #[tracing::instrument(level = "trace", skip(self), fields(mountpoint = ?self.mountpoint))]
     fn init(&self, capable: FsOptions) -> std::io::Result<FsOptions> {
         self.fs_opts
             .set(capable)
@@ -21,16 +22,21 @@ impl FileSystem for GeoScribeFs {
     }
 
     forward_to_inner! {
+        #[skip(w)]
         fn read(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, w: &mut dyn ZeroCopyWriter, size: u32, offset: u64, lock_owner: Option<u64>, flags: u32) -> std::io::Result<usize>;
+        #[skip(r)]
         fn write(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, r: &mut dyn ZeroCopyReader, size: u32, offset: u64, lock_owner: Option<u64>, delayed_write: bool, flags: u32, fuse_flags: u32) -> std::io::Result<usize>;
+        #[skip(add_entry)]
         fn readdir(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, size: u32, offset: u64, add_entry: &mut dyn FnMut(DirEntry) -> std::io::Result<usize>) -> std::io::Result<()>;
+        #[skip(add_entry)]
         fn readdirplus(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, size: u32, offset: u64, add_entry: &mut dyn FnMut( DirEntry, Entry, ) -> std::io::Result<usize>) -> std::io::Result<()>;
+        #[skip(lock)]
         fn getlk(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, owner: u64, lock: FileLock, flags: u32) -> std::io::Result<FileLock>;
+        #[skip(lock)]
         fn setlk(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, owner: u64, lock: FileLock, flags: u32) -> std::io::Result<()>;
+        #[skip(lock)]
         fn setlkw(&self, ctx: &Context, inode: Self::Inode, handle: Self::Handle, owner: u64, lock: FileLock, flags: u32) -> std::io::Result<()>;
-    }
 
-    forward_to_inner_full_trace! {
         fn destroy(&self);
         fn lookup(&self, ctx: &Context, parent: Self::Inode, name: &CStr) -> std::io::Result<Entry>;
         fn forget(&self, ctx: &Context, inode: Self::Inode, count: u64);

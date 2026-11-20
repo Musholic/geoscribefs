@@ -28,13 +28,16 @@ mod ops_sync;
 
 use std::panic;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 use std::thread::JoinHandle;
 
 use arc_swap::ArcSwap;
+use fuse_backend_rs::api::BackendFileSystem;
 use fuse_backend_rs::transport::FuseSession;
 use fuse_backend_rs::{abi::fuse_abi::FsOptions, passthrough::PassthroughFs};
+use tokio::runtime::Handle;
 use tokio::sync::Mutex;
+use tokio::task::block_in_place;
 
 use crate::server::{GeoScribeFsManager, error::FsError};
 
@@ -42,16 +45,36 @@ use crate::server::{GeoScribeFsManager, error::FsError};
 pub struct MountHandle {
     pub mountpoint: PathBuf,
     pub volume_name: String,
+    fs: Weak<Box<dyn BackendFileSystem<Inode = u64, Handle = u64> + Send + Sync>>,
     thread_handle: Option<JoinHandle<Result<(), FsError>>>,
 }
 
 impl MountHandle {
-    /// Manually detach and wait for the filesystem thread to finish.
-    pub fn unmount(mut self) -> Result<(), FsError> {
-        self.cleanup()
+    pub async fn mount(&self) -> Result<(), FsError> {
+        if let Some(fs) = self.fs.upgrade() {
+            let fs = fs
+                .as_any()
+                .downcast_ref::<GeoScribeFs>()
+                .ok_or_else(|| FsError::Unexpected("Could not cast to GeoScribeFs"))?;
+            return fs.unpark().await;
+        }
+        Ok(())
     }
 
-    fn cleanup(&mut self) -> Result<(), FsError> {
+    /// Manually detach and wait for the filesystem thread to finish.
+    pub async fn unmount(mut self) -> Result<(), FsError> {
+        self.cleanup().await
+    }
+
+    async fn cleanup(&mut self) -> Result<(), FsError> {
+        tracing::debug!(mountpoint = ?self.mountpoint, "Cleaning up...");
+        if let Some(fs) = self.fs.upgrade() {
+            let fs = fs
+                .as_any()
+                .downcast_ref::<GeoScribeFs>()
+                .ok_or_else(|| FsError::Unexpected("Could not cast to GeoScribeFs"))?;
+            fs.umount_session().await?;
+        }
         if let Some(handle) = self.thread_handle.take()
             && let Err(e) = handle.join()
         {
@@ -63,7 +86,10 @@ impl MountHandle {
 
 impl Drop for MountHandle {
     fn drop(&mut self) {
-        let _ = self.cleanup();
+        let cleanup = block_in_place(|| Handle::current().block_on(self.cleanup()));
+        if let Err(e) = cleanup {
+            tracing::error!(mountpoint = ?self.mountpoint, error = ?e, "Failed to clean up mount on drop");
+        }
     }
 }
 
@@ -72,9 +98,10 @@ pub struct GeoScribeFs {
     session: std::sync::Mutex<FuseSession>,
     pub volume_name: String,
     mountpoint: PathBuf,
-    manager: Arc<GeoScribeFsManager>,
-    detached: Mutex<bool>,
+    manager: Weak<GeoScribeFsManager>,
+    parked: Mutex<bool>,
     fs_opts: OnceLock<FsOptions>,
+    park_mountpoint: PathBuf,
 }
 
 pub struct Config {
