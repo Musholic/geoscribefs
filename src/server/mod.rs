@@ -2,8 +2,9 @@ use crate::{
     fuse::{self},
     proto::{
         AskWriteRequest, AskWriteResponse, ListSnapshotsRequest, ListSnapshotsResponse,
-        RestoreRequest, RestoreResponse, SendSnapshotRequest, SnapshotChunk, SnapshotRequest,
-        SnapshotResponse, StatusRequest, StatusResponse, WriteRequest, WriteResponse,
+        ReceiveSnapshotRequest, ReceiveSnapshotResponse, RestoreRequest, RestoreResponse,
+        SendSnapshotRequest, SendSnapshotResponse, SnapshotRequest, SnapshotResponse,
+        StatusRequest, StatusResponse, WriteRequest, WriteResponse,
         geo_scribe_fs_service_server::{GeoScribeFsService, GeoScribeFsServiceServer},
     },
     server::{
@@ -11,8 +12,11 @@ use crate::{
     },
     volume_manager::{self, VolumeManager},
 };
+use bytes::Bytes;
+use std::time::Duration;
 use std::{
     collections::BTreeMap,
+    io,
     net::SocketAddr,
     path::PathBuf,
     pin::Pin,
@@ -21,10 +25,11 @@ use std::{
 use tokio::sync::oneshot::Receiver;
 use tokio_stream::{Stream, StreamExt};
 use tokio_util::io::ReaderStream;
-use tonic::{Request, Response, Status, service::Interceptor, transport::Server};
+use tonic::{Request, Response, Status, Streaming, service::Interceptor, transport::Server};
 use tracing::debug;
 
 pub mod error;
+pub mod replication;
 mod snapshot;
 mod status;
 pub mod sync;
@@ -91,7 +96,7 @@ impl GeoScribeFsManager {
 #[tonic::async_trait]
 impl GeoScribeFsService for MyGeoScribeFsService {
     type SendSnapshotStream =
-        Pin<Box<dyn Stream<Item = Result<SnapshotChunk, Status>> + Send + 'static>>;
+        Pin<Box<dyn Stream<Item = Result<SendSnapshotResponse, Status>> + Send + 'static>>;
 
     async fn status(&self, _: Request<StatusRequest>) -> Result<Response<StatusResponse>, Status> {
         Ok(Response::new(self.manager.handle_status().await?))
@@ -171,11 +176,36 @@ impl GeoScribeFsService for MyGeoScribeFsService {
 
         let stream = ReaderStream::new(stdout).map(|chunk| {
             chunk
-                .map(|c| SnapshotChunk { data: c.to_vec() })
+                .map(|c| SendSnapshotResponse { data: c.to_vec() })
                 .map_err(|e| tonic::Status::internal(e.to_string()))
         });
 
         Ok(Response::new(Box::pin(stream)))
+    }
+
+    async fn receive_snapshot(
+        &self,
+        request: Request<Streaming<ReceiveSnapshotRequest>>,
+    ) -> Result<Response<ReceiveSnapshotResponse>, Status> {
+        let volume_name = request
+            .metadata()
+            .get("volume_name")
+            .ok_or_else(|| Status::internal("No volume name in metadata"))?
+            .to_str()
+            .map_err(|_| Status::internal("Invalid volume name in metadata"))?
+            .to_string();
+
+        let chunks = request.into_inner().map(|chunk| {
+            chunk
+                .map(|msg| Bytes::from(msg.data))
+                .map_err(io::Error::other)
+        });
+
+        self.manager
+            .handle_receive_snapshot(&volume_name, chunks)
+            .await?;
+
+        Ok(Response::new(ReceiveSnapshotResponse { success: true }))
     }
 }
 
@@ -193,12 +223,25 @@ impl Interceptor for AuthInterceptor {
     }
 }
 
+/// Target to which a volume's snapshots are periodically pushed.
+#[derive(Debug, Clone)]
+pub struct ReplicaConfig {
+    /// Name of the volume to replicate.
+    pub volume_name: String,
+    /// Address of the replica geoscribefs server.
+    pub addr: String,
+}
+
 #[derive(Debug)]
 pub struct ServerConfig {
     pub addr: String,
     pub token: String,
     pub peers: Vec<String>,
     pub volume_paths: Vec<String>,
+    /// Volumes configured for periodic snapshot replication to warm replicas.
+    pub replicas: Vec<ReplicaConfig>,
+    /// How often snapshots are pushed to each configured replica.
+    pub replication_interval: Duration,
 }
 
 impl Default for ServerConfig {
@@ -208,6 +251,8 @@ impl Default for ServerConfig {
             token: "default-token".to_string(),
             peers: vec![],
             volume_paths: vec![],
+            replicas: vec![],
+            replication_interval: Duration::from_secs(300),
         }
     }
 }
@@ -240,6 +285,15 @@ pub async fn run_server(
         manager.register_volume(volume_manager)?;
     }
 
+    if !config.replicas.is_empty() {
+        replication::ReplicationScheduler::new(
+            manager.clone(),
+            config.replicas,
+            config.replication_interval,
+        )
+        .spawn();
+    }
+
     let socket_addr: SocketAddr = config.addr.parse()?;
     debug!("Starting gRPC daemon on {}", socket_addr);
 
@@ -251,13 +305,15 @@ pub async fn run_server(
         token: config.token.clone(),
     };
 
-    Server::builder()
+    let result = Server::builder()
         .add_service(GeoScribeFsServiceServer::with_interceptor(
             service,
             interceptor,
         ))
         .serve_with_shutdown(socket_addr, shutdown_signal(shutdown_rx))
-        .await?;
+        .await;
+
+    result?;
 
     tracing::info!("Server exited");
     Ok(())

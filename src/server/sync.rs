@@ -1,41 +1,34 @@
 use crate::{
     client::GeoScribeClient,
     fuse::GeoScribeFs,
-    server::{GeoScribeFsManager, error::FsError},
-    volume_manager::VolumeManager,
+    server::{GeoScribeFsManager, error::FsError, snapshot::SnapshotHandler},
 };
-use tokio::io::AsyncWriteExt;
+use bytes::Bytes;
+use std::io;
+use tokio_stream::StreamExt;
 
 #[tonic::async_trait]
 pub trait SyncHandler {
     async fn sync(&self, fs: &GeoScribeFs) -> Result<(), FsError>;
 }
 
+/// Pulls the latest snapshot from the volume's owner and save it in the snapshots directory of this volume
 async fn download_latest_remote_snapshot(
-    manager: &dyn VolumeManager,
+    manager: &GeoScribeFsManager,
+    volume_name: &str,
     mut client: GeoScribeClient,
 ) -> Result<(), FsError> {
-    let mut child = manager.receive_snapshot_process()?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| FsError::IoOther("stdin not available".to_string()))?;
+    // Unwrap the stream to a generic bytes stream for the generic handle_receive_snapshot method
+    let chunks = client
+        .send_snapshot(volume_name.to_string())
+        .await?
+        .map(|chunk| {
+            chunk
+                .map(|msg| Bytes::from(msg.data))
+                .map_err(io::Error::other)
+        });
 
-    let mut stream = client
-        .send_snapshot(manager.volume_name().to_string())
-        .await?;
-
-    while let Some(chunk) = stream.message().await? {
-        stdin.write_all(&chunk.data).await?;
-    }
-
-    drop(stdin);
-    let status = child.wait().await?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(FsError::IoOther("btrfs receive failed".to_string()))
-    }
+    manager.handle_receive_snapshot(volume_name, chunks).await
 }
 
 #[tonic::async_trait]
@@ -55,7 +48,7 @@ impl SyncHandler for GeoScribeFsManager {
         // Detach the mount so that we don't keep any opened file that could prevent restore
         fs.park().await?;
         fs.detach().await?;
-        download_latest_remote_snapshot(manager.as_ref(), client).await?;
+        download_latest_remote_snapshot(self, &fs.volume_name, client).await?;
         // Get the latest snapshot (the one we just downloaded) and restore it
         let snapshots = manager.list_snapshots().await?;
         let latest_snapshot = snapshots

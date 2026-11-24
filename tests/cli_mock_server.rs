@@ -6,15 +6,16 @@ use geoscribefs::{
     cli::{Cli, run_cli},
     proto::{
         AskWriteRequest, AskWriteResponse, ListSnapshotsRequest, ListSnapshotsResponse,
-        RestoreRequest, RestoreResponse, SendSnapshotRequest, SnapshotChunk, SnapshotRequest,
-        SnapshotResponse, StatusRequest, StatusResponse, WriteRequest, WriteResponse,
+        ReceiveSnapshotRequest, ReceiveSnapshotResponse, RestoreRequest, RestoreResponse,
+        SendSnapshotRequest, SendSnapshotResponse, SnapshotRequest, SnapshotResponse,
+        StatusRequest, StatusResponse, WriteRequest, WriteResponse,
         geo_scribe_fs_service_server::{GeoScribeFsService, GeoScribeFsServiceServer},
     },
 };
 use std::{net::SocketAddr, pin::Pin};
 use test_log::test;
 use tokio_stream::Stream;
-use tonic::{Request, Response, Status, transport::Server};
+use tonic::{Request, Response, Status, Streaming, transport::Server};
 
 #[derive(Default)]
 struct MockGeoScribeFsServer;
@@ -22,7 +23,7 @@ struct MockGeoScribeFsServer;
 #[tonic::async_trait]
 impl GeoScribeFsService for MockGeoScribeFsServer {
     type SendSnapshotStream =
-        Pin<Box<dyn Stream<Item = Result<SnapshotChunk, Status>> + Send + 'static>>;
+        Pin<Box<dyn Stream<Item = Result<SendSnapshotResponse, Status>> + Send + 'static>>;
 
     async fn status(&self, _: Request<StatusRequest>) -> Result<Response<StatusResponse>, Status> {
         Ok(Response::new(StatusResponse {
@@ -71,6 +72,13 @@ impl GeoScribeFsService for MockGeoScribeFsServer {
         &self,
         _: Request<SendSnapshotRequest>,
     ) -> Result<Response<Self::SendSnapshotStream>, Status> {
+        unimplemented!()
+    }
+
+    async fn receive_snapshot(
+        &self,
+        _: Request<Streaming<ReceiveSnapshotRequest>>,
+    ) -> Result<Response<ReceiveSnapshotResponse>, Status> {
         unimplemented!()
     }
 }

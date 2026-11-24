@@ -1,9 +1,16 @@
 use crate::proto::{
-    ListSnapshotsRequest, RestoreRequest, SendSnapshotRequest, SnapshotChunk, SnapshotRequest,
-    StatusRequest, WriteRequest, geo_scribe_fs_service_client::GeoScribeFsServiceClient,
+    ListSnapshotsRequest, ReceiveSnapshotRequest, RestoreRequest, SendSnapshotRequest,
+    SendSnapshotResponse, SnapshotRequest, StatusRequest, WriteRequest,
+    geo_scribe_fs_service_client::GeoScribeFsServiceClient,
 };
-use std::time::Duration;
-use tonic::{Request, Streaming, transport::Channel};
+use bytes::Bytes;
+use std::{
+    io,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+use tokio_stream::{Stream, StreamExt};
+use tonic::{IntoStreamingRequest, Request, Streaming, transport::Channel};
 
 macro_rules! with_retries {
     ($action:expr) => {{
@@ -111,7 +118,7 @@ impl GeoScribeClient {
     pub async fn send_snapshot(
         &mut self,
         volume_name: String,
-    ) -> Result<Streaming<SnapshotChunk>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Streaming<SendSnapshotResponse>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(self
             .inner
             .send_snapshot(SendSnapshotRequest {
@@ -119,5 +126,37 @@ impl GeoScribeClient {
             })
             .await?
             .into_inner())
+    }
+
+    /// Streams snapshot bytes into the remote receive process.
+    pub async fn receive_snapshot(
+        &mut self,
+        volume_name: &str,
+        chunks: impl Stream<Item = io::Result<Bytes>> + Send + 'static,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let read_err = Arc::new(OnceLock::new());
+        let err_slot = Arc::clone(&read_err);
+
+        // Capture errors during the streaming process
+        let messages = chunks.map_while(move |chunk| match chunk {
+            Ok(data) => Some(ReceiveSnapshotRequest { data: data.into() }),
+            Err(err) => {
+                let _ = err_slot.set(err);
+                None
+            }
+        });
+
+        let mut request = messages.into_streaming_request();
+        request
+            .metadata_mut()
+            .insert("volume_name", volume_name.parse()?);
+
+        let res = self.inner.receive_snapshot(request).await;
+
+        if let Some(err) = read_err.get() {
+            return Err(err.to_string().into());
+        }
+
+        Ok(res?.into_inner().success)
     }
 }
