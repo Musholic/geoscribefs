@@ -2,7 +2,10 @@ use crate::{
     proto::{ListSnapshotsResponse, RestoreResponse, SnapshotResponse},
     server::{GeoScribeFsManager, error::FsError},
 };
-use tokio::process::ChildStdout;
+use bytes::Bytes;
+use std::io;
+use tokio::{io::AsyncWriteExt, process::ChildStdout};
+use tokio_stream::{Stream, StreamExt};
 
 #[tonic::async_trait]
 pub trait SnapshotHandler {
@@ -17,6 +20,12 @@ pub trait SnapshotHandler {
         volume_name: &str,
     ) -> Result<ListSnapshotsResponse, FsError>;
     async fn handle_send_snapshot(&self, volume_name: &str) -> Result<ChildStdout, FsError>;
+    /// Save the snapshot into the snapshots directory of the volume
+    async fn handle_receive_snapshot(
+        &self,
+        volume_name: &str,
+        chunks: impl Stream<Item = io::Result<Bytes>> + Send + Unpin,
+    ) -> Result<(), FsError>;
 }
 
 #[tonic::async_trait]
@@ -75,5 +84,34 @@ impl SnapshotHandler for GeoScribeFsManager {
             .ok_or_else(|| FsError::IoOther("Failed to read send process stdout".to_string()))?;
 
         Ok(stdout)
+    }
+
+    async fn handle_receive_snapshot(
+        &self,
+        volume_name: &str,
+        mut chunks: impl Stream<Item = io::Result<Bytes>> + Send + Unpin,
+    ) -> Result<(), FsError> {
+        let mut child = self
+            .get_volume_manager(volume_name)?
+            .receive_snapshot_process()?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            FsError::IoOther(format!("no stdin for {volume_name} receive process"))
+        })?;
+
+        while let Some(chunk) = chunks.next().await {
+            stdin.write_all(&chunk?).await?;
+        }
+
+        // Closing stdin is what lets the receive process finish
+        drop(stdin);
+        let status = child.wait().await?;
+
+        if !status.success() {
+            return Err(FsError::IoOther(format!(
+                "receive process failed for volume {volume_name}"
+            )));
+        }
+
+        Ok(())
     }
 }

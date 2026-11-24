@@ -22,6 +22,12 @@ enum Commands {
         peers: Vec<String>,
         #[arg(long)]
         volume_paths: Vec<String>,
+        /// Warm replica targets as `<volume_name>:<addr>`, repeatable.
+        #[arg(long)]
+        replica: Vec<String>,
+        /// Interval in seconds between snapshot pushes to replicas.
+        #[arg(long, default_value_t = 300)]
+        replication_interval: u64,
     },
     Status,
     Write {
@@ -53,13 +59,27 @@ pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error + Sen
         Commands::Start {
             peers,
             volume_paths,
+            replica,
+            replication_interval,
         } => {
+            let mut replicas = Vec::with_capacity(replica.len());
+            for spec in &replica {
+                let (volume_name, addr) = spec.rsplit_once(':').ok_or_else(|| {
+                    format!("Invalid --replica '{spec}', expected <volume_name>:<addr>")
+                })?;
+                replicas.push(server::ReplicaConfig {
+                    volume_name: volume_name.to_string(),
+                    addr: addr.to_string(),
+                });
+            }
             server::run_server(
                 server::ServerConfig {
                     addr,
                     token,
                     peers,
                     volume_paths,
+                    replicas,
+                    replication_interval: std::time::Duration::from_secs(replication_interval),
                 },
                 None,
             )

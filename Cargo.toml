@@ -6,10 +6,10 @@ edition = "2024"
 [dependencies]
 tonic = "0.12"
 prost = "0.13"
+bytes = "1"
 clap = { version = "4.0", features = ["derive", "env"] }
 tokio = { version = "1.0", features = ["full"] }
-fuser = "0.18"
-nix = { version = "0.31", features = ["mount", "sched", "signal"] }
+nix = { version = "0.31", features = ["mount", "sched", "signal", "fs"] }
 libc = "0.2"
 fuse-backend-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs", features = [
     "fusedev",
@@ -17,12 +17,8 @@ fuse-backend-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs",
 ] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tokio-uring = "0.5.0"
-test-log = { version = "0.2.21", features = ["trace"] }
 chrono = "0.4.45"
 thiserror = "2.0.21"
-rstest = "0.27.0"
-rand = "0.10.3"
 tokio-stream = "0.1.19"
 tokio-util = { version = "0.7.20", features = ["io"] }
 arc-swap = "1.9.2"
@@ -31,6 +27,9 @@ arc-swap = "1.9.2"
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"
+rstest = "0.27.0"
+test-log = { version = "0.2.21", features = ["trace"] }
+rand = "0.10.3"
 
 [build-dependencies]
 tonic-build = "0.12"
