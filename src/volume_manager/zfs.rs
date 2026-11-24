@@ -1,14 +1,21 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
-use tokio::process::{Child, Command};
+use tokio::{
+    process::{Child, Command},
+    time::timeout,
+};
 
 use crate::{
     fuse,
+    server::error::FsError,
     volume_manager::{StorageError, VolumeManager},
 };
+
+const FAST_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub struct ZfsVolumeManager {
     pub mount: fuse::MountHandle,
@@ -16,11 +23,16 @@ pub struct ZfsVolumeManager {
 }
 
 /// Resolve the mountpoint to a ZFS dataset name
-fn get_dataset_name(mountpoint: &Path) -> Result<String, StorageError> {
-    let output = std::process::Command::new("zfs")
-        .args(["list", "-H", "-o", "name", &mountpoint.to_string_lossy()])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("Failed to execute zfs list: {}", e)))?;
+async fn get_dataset_name(mountpoint: &Path) -> Result<String, StorageError> {
+    let output = timeout(
+        FAST_TIMEOUT,
+        Command::new("zfs")
+            .args(["list", "-H", "-o", "name", &mountpoint.to_string_lossy()])
+            .output(),
+    )
+    .await
+    .map_err(|e| StorageError::CommandTimeout(e, "zfs list".to_string()))?
+    .map_err(|e| StorageError::CommandFailed(format!("zfs list: {}", e)))?;
 
     if !output.status.success() {
         return Err(StorageError::CommandFailed(
@@ -40,10 +52,10 @@ fn get_dataset_name(mountpoint: &Path) -> Result<String, StorageError> {
 }
 
 impl ZfsVolumeManager {
-    pub fn new(mount: fuse::MountHandle) -> Result<Self, StorageError> {
+    pub async fn new(mount: fuse::MountHandle) -> Result<Self, StorageError> {
         let mountpoint = &mount.mountpoint;
 
-        let dataset_name = get_dataset_name(mountpoint)?;
+        let dataset_name = get_dataset_name(mountpoint).await?;
 
         Ok(Self {
             mount,
@@ -121,13 +133,15 @@ impl VolumeManager for ZfsVolumeManager {
             ));
         }
 
-        let snapshots = String::from_utf8_lossy(&output.stdout)
+        let mut snapshots: Vec<String> = String::from_utf8_lossy(&output.stdout)
             .lines()
             .filter_map(|line| {
                 // ZFS returns "pool/dataset@snapshot", we only want the "snapshot" part
                 line.split('@').next_back().map(|s| s.to_string())
             })
             .collect();
+
+        snapshots.sort();
 
         Ok(snapshots)
     }
@@ -143,7 +157,11 @@ impl VolumeManager for ZfsVolumeManager {
             .spawn()
     }
 
-    fn send_snapshot_process(&self, snapshot_date: &str) -> io::Result<Child> {
+    fn send_snapshot_process(
+        &self,
+        snapshot_date: &str,
+        base_snapshot_date: Option<&str>,
+    ) -> io::Result<Child> {
         let snapshot_name = get_snapshot_name(&self.dataset_name, snapshot_date);
         tracing::debug!(
             dataset_name = ?self.dataset_name,
@@ -151,11 +169,13 @@ impl VolumeManager for ZfsVolumeManager {
             "Start zfs send process"
         );
 
-        Command::new("zfs")
-            .arg("send")
-            .arg(&snapshot_name)
-            .stdout(std::process::Stdio::piped())
-            .spawn()
+        let mut cmd = Command::new("zfs");
+        cmd.arg("send").arg(&snapshot_name);
+        if let Some(base_snapshot_date) = base_snapshot_date {
+            let base_snapshot_name = get_snapshot_name(&self.dataset_name, base_snapshot_date);
+            cmd.arg("-i").arg(base_snapshot_name);
+        }
+        cmd.stdout(std::process::Stdio::piped()).spawn()
     }
 
     fn volume_path(&self) -> PathBuf {
@@ -164,5 +184,9 @@ impl VolumeManager for ZfsVolumeManager {
 
     fn volume_name(&self) -> String {
         self.mount.volume_name.clone()
+    }
+
+    async fn mount(&self) -> Result<(), FsError> {
+        self.mount.mount().await
     }
 }

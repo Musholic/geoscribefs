@@ -15,6 +15,7 @@ use crate::fuse::GeoScribeFs;
 #[warn(clippy::missing_trait_methods)]
 #[async_trait]
 impl AsyncFileSystem for GeoScribeFs {
+    #[tracing::instrument(level = "trace", skip(self, ctx), fields(mountpoint = ?self.mountpoint))]
     async fn async_open(
         &self,
         ctx: &Context,
@@ -26,7 +27,7 @@ impl AsyncFileSystem for GeoScribeFs {
             || (flags as i32 & libc::O_APPEND) != 0
             || (flags as i32 & libc::O_TRUNC) != 0;
         if is_write {
-            self.check_write_auth_and_detach().await?;
+            self.check_write_auth_and_park().await?;
         }
         self.inner
             .load_full()
@@ -34,6 +35,7 @@ impl AsyncFileSystem for GeoScribeFs {
             .await
     }
 
+    #[tracing::instrument(level = "trace", skip(self, ctx), fields(mountpoint = ?self.mountpoint))]
     async fn async_create(
         &self,
         ctx: &Context,
@@ -41,13 +43,14 @@ impl AsyncFileSystem for GeoScribeFs {
         name: &CStr,
         args: CreateIn,
     ) -> Result<(Entry, Option<Self::Handle>, OpenOptions)> {
-        self.check_write_auth_and_detach().await?;
+        self.check_write_auth_and_park().await?;
         self.inner
             .load_full()
             .async_create(ctx, parent, name, args)
             .await
     }
 
+    #[tracing::instrument(level = "trace", skip(self, ctx, r), fields(mountpoint = ?self.mountpoint))]
     async fn async_write(
         &self,
         ctx: &Context,
@@ -61,7 +64,7 @@ impl AsyncFileSystem for GeoScribeFs {
         flags: u32,
         fuse_flags: u32,
     ) -> io::Result<usize> {
-        self.check_write_auth_and_detach().await?;
+        self.check_write_auth_and_park().await?;
         self.inner
             .load_full()
             .async_write(
@@ -79,9 +82,10 @@ impl AsyncFileSystem for GeoScribeFs {
             .await
     }
 
+    #[tracing::instrument(level = "trace", skip(self, ctx), fields(mountpoint = ?self.mountpoint))]
     async fn async_setattr(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         inode: Self::Inode,
         attr: libc::stat64,
         handle: Option<Self::Handle>,
@@ -89,15 +93,16 @@ impl AsyncFileSystem for GeoScribeFs {
     ) -> Result<(libc::stat64, Duration)> {
         // FATTR_SIZE triggers during file truncation (e.g. `> file.txt`)
         if valid.contains(SetattrValid::SIZE) {
-            self.check_write_auth_and_detach().await?;
+            self.check_write_auth_and_park().await?;
         }
         self.inner
             .load_full()
-            .async_setattr(_ctx, inode, attr, handle, valid)
+            .async_setattr(ctx, inode, attr, handle, valid)
             .await
     }
 
     // Delegated methods
+    #[tracing::instrument(level = "trace", skip(self, ctx), fields(mountpoint = ?self.mountpoint))]
     async fn async_lookup(
         &self,
         ctx: &Context,
@@ -108,6 +113,7 @@ impl AsyncFileSystem for GeoScribeFs {
         self.inner.load_full().async_lookup(ctx, parent, name).await
     }
 
+    #[tracing::instrument(level = "trace", skip(self, ctx), fields(mountpoint = ?self.mountpoint))]
     async fn async_getattr(
         &self,
         ctx: &Context,
@@ -120,6 +126,7 @@ impl AsyncFileSystem for GeoScribeFs {
             .await
     }
 
+    #[tracing::instrument(level = "trace", skip(self, ctx, w), fields(mountpoint = ?self.mountpoint))]
     async fn async_read(
         &self,
         ctx: &Context,
@@ -137,6 +144,7 @@ impl AsyncFileSystem for GeoScribeFs {
             .await
     }
 
+    #[tracing::instrument(level = "trace", skip(self, ctx), fields(mountpoint = ?self.mountpoint))]
     async fn async_fsync(
         &self,
         ctx: &Context,
@@ -150,6 +158,7 @@ impl AsyncFileSystem for GeoScribeFs {
             .await
     }
 
+    #[tracing::instrument(level = "trace", skip(self, ctx), fields(mountpoint = ?self.mountpoint))]
     async fn async_fallocate(
         &self,
         ctx: &Context,
@@ -165,6 +174,7 @@ impl AsyncFileSystem for GeoScribeFs {
             .await
     }
 
+    #[tracing::instrument(level = "trace", skip(self, ctx), fields(mountpoint = ?self.mountpoint))]
     async fn async_fsyncdir(
         &self,
         ctx: &Context,

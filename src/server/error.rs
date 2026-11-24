@@ -1,6 +1,7 @@
 use std::{backtrace::Backtrace, sync::PoisonError};
 
 use crate::volume_manager::StorageError;
+use nix::errno::Errno;
 use thiserror::Error;
 use tokio::{io, time::error::Elapsed};
 
@@ -17,6 +18,8 @@ pub enum FsError {
     NotMounted(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Nix IO error: {0}")]
+    NixIo(#[from] Errno),
     #[error("Peer {0} denied write for volume {1}")]
     DeniedWrite(String, String),
     #[error("Tonic error: {0}")]
@@ -29,12 +32,16 @@ pub enum FsError {
     Storage(#[from] StorageError),
     #[error("Unexpected error: {0}")]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),
-    #[error("Unexpected error: {0}")]
+    #[error("Unexpected IO error: {0}")]
     IoOther(String),
+    #[error("Unexpected error: {0}")]
+    Unexpected(&'static str),
     #[error("Invalid volume path: {0}")]
     InvalidVolumePath(String),
     #[error("Timeout error: {0}")]
     TimeOut(#[from] Elapsed),
+    #[error("Weak reference lost for: {0}")]
+    WeakReferenceLost(&'static str),
 }
 
 impl From<tonic::transport::Error> for FsError {

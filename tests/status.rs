@@ -5,7 +5,7 @@ use geoscribefs::{client::GeoScribeClient, server::ServerConfig, volume_manager:
 use pretty_assertions::assert_eq;
 use test_log::test;
 
-#[test(tokio::test)]
+#[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn test_status() -> TestResult {
     let addr = get_random_addr();
     let addr2 = get_random_addr();
@@ -15,14 +15,14 @@ async fn test_status() -> TestResult {
     let temp_vol_b = temp_volume::create_temp_volume_named(FsBackend::Btrfs, "vol_b");
     let volume_path_b = temp_vol_b.volume.path().to_string_lossy().into_owned();
 
-    start_server(ServerConfig {
+    let _server = start_server(ServerConfig {
         addr: addr.to_string(),
         peers: vec![addr2.to_string(), addr3.to_string()],
         volume_paths: vec![volume_path_a.clone()],
         ..Default::default()
     })
     .await;
-    start_server(ServerConfig {
+    let _server = start_server(ServerConfig {
         addr: addr2.to_string(),
         peers: vec![addr.to_string(), addr3.to_string()],
         volume_paths: vec![volume_path_b.clone()],
@@ -30,7 +30,7 @@ async fn test_status() -> TestResult {
     })
     .await;
 
-    start_server(ServerConfig {
+    let _server = start_server(ServerConfig {
         addr: addr3.to_string(),
         peers: vec![addr.to_string(), addr2.to_string()],
         ..Default::default()

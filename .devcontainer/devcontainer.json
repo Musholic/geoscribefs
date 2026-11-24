@@ -1,17 +1,15 @@
 {
   "name": "Rust Dev",
   "build": {
-    "dockerfile": "Dockerfile",
+    "dockerfile": "Dockerfile"
   },
   "privileged": true,
-  "runArgs": ["--device=/dev/zfs"],
-
+  "runArgs": [
+    "--device=/dev/zfs",
+    "--network=host"
+  ],
   // Run as root inside the container so tests can run privileged tools like btrfs send/receive
   "remoteUser": "root",
-  "containerEnv": {
-    "RUST_LOG": "debug,geoscribefs=trace",
-    "RUST_BACKTRACE": "0",
-  },
   "postCreateCommand": "bash .devcontainer/init_volumes.bash",
-  "postStartCommand": "bash .devcontainer/mount_volumes.bash",
+  "postStartCommand": "bash .devcontainer/mount_volumes.bash"
 }

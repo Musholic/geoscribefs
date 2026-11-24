@@ -5,7 +5,7 @@ use crate::{client::GeoScribeClient, server};
 pub const DEFAULT_ADDR: &str = "127.0.0.1:50051";
 pub const TOKEN_ENV_VAR: &str = "GEOSCRIBE_TOKEN";
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 pub struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -15,7 +15,7 @@ pub struct Cli {
     token: String,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Commands {
     Start {
         #[arg(long)]
@@ -45,6 +45,7 @@ enum Commands {
 }
 
 pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    tracing::trace!(cli = ?cli, "CLI started");
     let addr = cli.addr;
     let token = cli.token;
 
@@ -53,12 +54,15 @@ pub async fn run_cli(cli: Cli) -> Result<String, Box<dyn std::error::Error + Sen
             peers,
             volume_paths,
         } => {
-            server::run_server(server::ServerConfig {
-                addr,
-                token,
-                peers,
-                volume_paths,
-            })
+            server::run_server(
+                server::ServerConfig {
+                    addr,
+                    token,
+                    peers,
+                    volume_paths,
+                },
+                None,
+            )
             .await?;
             Ok("Server exited".to_string())
         }

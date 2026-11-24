@@ -22,7 +22,7 @@ async fn test_read(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: FsBacken
     std::fs::write(&hello_path, "Hello").expect("Failed to write hello.txt");
 
     let addr = get_random_addr();
-    start_server(ServerConfig {
+    let _server = start_server(ServerConfig {
         addr,
         volume_paths: vec![volume_path.clone()],
         ..Default::default()
@@ -44,7 +44,7 @@ async fn test_fuse_write(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: Fs
     let volume_path = temp_vol.volume.path().to_string_lossy().into_owned();
 
     let addr = get_random_addr();
-    start_server(ServerConfig {
+    let _server = start_server(ServerConfig {
         addr,
         volume_paths: vec![volume_path.clone()],
         ..Default::default()
@@ -62,9 +62,9 @@ async fn test_fuse_write(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: Fs
     );
 
     // Attempt to write to the volume.
-    // This should trigger: open -> gRPC write request -> MNT_DETACH -> native write
+    // This should trigger: open -> gRPC write request -> MNT_MOVE -> native write
     {
-        tracing::debug!("Opening file for write...");
+        tracing::info!("Opening file for write...");
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -72,12 +72,12 @@ async fn test_fuse_write(#[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: Fs
             .open(&file_path)
             .expect("Failed to open file for writing");
 
-        tracing::debug!("Writing content...");
+        tracing::info!("Writing content...");
         file.write_all(content).expect("Failed to write content");
     }
 
     // Verify content
-    tracing::debug!("Verifying content...");
+    tracing::info!("Verifying content...");
     let mut read_content = Vec::new();
     let mut file = fs::File::open(&file_path).expect("Failed to open file for reading");
     file.read_to_end(&mut read_content)
@@ -107,14 +107,14 @@ async fn test_fuse_write_server1_then_read_server2(
     let temp_vol2 = temp_volume::create_temp_volume_named(backend, temp_vol.volume.volume_name());
     let volume_path2 = temp_vol2.volume.path().to_string_lossy().into_owned();
 
-    start_server(ServerConfig {
+    let _server = start_server(ServerConfig {
         addr: addr.to_string(),
         peers: vec![addr2.to_string()],
         volume_paths: vec![volume_path.clone()],
         ..Default::default()
     })
     .await;
-    start_server(ServerConfig {
+    let _server = start_server(ServerConfig {
         addr: addr2.to_string(),
         peers: vec![addr.to_string()],
         volume_paths: vec![volume_path2.clone()],
@@ -135,5 +135,74 @@ async fn test_fuse_write_server1_then_read_server2(
     file2
         .read_to_string(&mut contents)
         .expect("Failed to read from file");
+    assert_eq!(contents, "Hello, World!");
+}
+
+// Spawn two servers, write on the first and append on the second, read on the first
+#[test(tokio::test(flavor = "multi_thread", worker_threads = 4))]
+#[rstest]
+async fn test_fuse_write_server1_then_append_server2(
+    #[values(FsBackend::Btrfs, FsBackend::Zfs)] backend: FsBackend,
+) {
+    // Start the two servers, each with their volume of the same name
+    let addr = get_random_addr();
+    let addr2 = get_random_addr();
+
+    let temp_vol = temp_volume::create_temp_volume(backend);
+    let volume_path = temp_vol.volume.path().to_string_lossy().into_owned();
+    let temp_vol2 = temp_volume::create_temp_volume_named(backend, temp_vol.volume.volume_name());
+    let volume_path2 = temp_vol2.volume.path().to_string_lossy().into_owned();
+
+    let _server = start_server(ServerConfig {
+        addr: addr.to_string(),
+        peers: vec![addr2.to_string()],
+        volume_paths: vec![volume_path.clone()],
+        ..Default::default()
+    })
+    .await;
+    let _server = start_server(ServerConfig {
+        addr: addr2.to_string(),
+        peers: vec![addr.to_string()],
+        volume_paths: vec![volume_path2.clone()],
+        ..Default::default()
+    })
+    .await;
+
+    // Write into the first volume
+    let file_path = temp_vol.volume.path().join("hello.txt");
+    tracing::info!("Writing on first volume");
+    {
+        let mut file = fs::File::create(&file_path).expect("Failed to create file");
+        file.write_all(b"Hello, ").expect("Failed to write to file");
+    }
+
+    // Append from the second volume
+    {
+        tracing::info!("Writing on second volume");
+        let file_path2 = temp_vol2.volume.path().join("hello.txt");
+        let mut file2 = fs::OpenOptions::new()
+            .append(true)
+            .open(&file_path2)
+            .expect("Failed to open file for appending");
+        file2
+            .write_all(b"World!")
+            .expect("Failed to append to file");
+    }
+
+    // The first volume should be fuse mounted back
+    assert!(
+        is_fuse_mounted(temp_vol.volume.path()),
+        "Volume should be FUSE mounted"
+    );
+
+    // Read back on the first volume
+    tracing::info!("Reading back from the first volume...");
+    let mut contents = String::new();
+    {
+        let mut file = fs::File::open(&file_path).expect("Failed to open file");
+        file.read_to_string(&mut contents)
+            .expect("Failed to read from file");
+    }
+
     assert_eq!(contents, "Hello, World!");
 }

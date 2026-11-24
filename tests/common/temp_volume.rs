@@ -1,18 +1,26 @@
 use std::{
+    io,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, ExitStatus},
 };
 
 use geoscribefs::volume_manager::FsBackend;
 
 pub trait TempVolume {
-    fn delete(&mut self);
+    fn delete(&mut self) -> io::Result<ExitStatus>;
     fn path(&self) -> &Path;
     fn volume_name(&self) -> &str {
         self.path()
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("")
+    }
+
+    fn park_path(&self, pid: u32) -> PathBuf {
+        Path::new("/tmp/geoscribefs")
+            .join(format!("{:04}", pid))
+            .join(".volumes")
+            .join(self.volume_name())
     }
 }
 
@@ -22,11 +30,14 @@ pub struct TempVolumeGuard {
 
 impl Drop for TempVolumeGuard {
     fn drop(&mut self) {
-        tracing::debug!(
-            "Dropping temp volume with path {}",
-            self.volume.path().display()
-        );
-        self.volume.delete();
+        tracing::debug!(path = ?self.volume.path(), "Dropping temp volume");
+        if let Err(e) = self.volume.delete() {
+            tracing::error!(
+                error = %e,
+                path = ?self.volume.path(),
+                "Failed to delete temp volume"
+            )
+        }
     }
 }
 
@@ -76,11 +87,12 @@ impl BtrfsTempVolume {
 }
 
 impl TempVolume for BtrfsTempVolume {
-    fn delete(&mut self) {
-        let _ = Command::new("btrfs")
+    fn delete(&mut self) -> io::Result<ExitStatus> {
+        Command::new("btrfs")
             .args(["subvolume", "delete", self.volume_path.to_str().unwrap()])
-            .status();
+            .status()
     }
+
     fn path(&self) -> &Path {
         &self.volume_path
     }
@@ -88,14 +100,15 @@ impl TempVolume for BtrfsTempVolume {
 
 pub struct ZfsTempVolume {
     pub volume_path: PathBuf,
-    dataset: String,
+    parent_dataset: String,
 }
 
 impl ZfsTempVolume {
     fn create(volume_name: &str) -> Self {
         let zpool_name = "zpool_geoscribefs".to_string();
         let random_parent_dataset = format!("{:x}", rand::random::<u64>());
-        let dataset = format!("{}/{}/{}", zpool_name, random_parent_dataset, volume_name);
+        let parent_dataset = format!("{}/{}", zpool_name, random_parent_dataset);
+        let dataset = format!("{}/{}", parent_dataset, volume_name);
         Command::new("zfs")
             .args(["create", "-p", &dataset])
             .status()
@@ -105,16 +118,16 @@ impl ZfsTempVolume {
 
         Self {
             volume_path: PathBuf::from(volume_path),
-            dataset,
+            parent_dataset,
         }
     }
 }
 
 impl TempVolume for ZfsTempVolume {
-    fn delete(&mut self) {
-        let _ = Command::new("zfs")
-            .args(["destroy", "-r", self.dataset.as_str()])
-            .status();
+    fn delete(&mut self) -> io::Result<ExitStatus> {
+        Command::new("zfs")
+            .args(["destroy", "-r", self.parent_dataset.as_str()])
+            .status()
     }
 
     fn path(&self) -> &Path {
