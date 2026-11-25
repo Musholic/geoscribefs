@@ -8,7 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     protobuf-compiler \
     btrfs-progs \
     zfsutils-linux \
+    bat \
+    ripgrep \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ln -s /usr/bin/batcat /usr/local/bin/bat
 
 # Install cargo-nextest via cargo-binstall
 RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash

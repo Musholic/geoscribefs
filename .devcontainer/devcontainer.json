@@ -1,15 +1,22 @@
 {
   "name": "Rust Dev",
   "build": {
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
   },
   "privileged": true,
-  "runArgs": [
-    "--device=/dev/zfs",
-    "--network=host"
+  "runArgs": ["--device=/dev/zfs", "--network=host"],
+  // Share the agent's global skills from the host home into root's home so the
+  // dev server and terminal see the same ~/.agents/skills Zed reads on the host
+  "mounts": [
+    "source=${localEnv:HOME}/.agents/skills,target=/root/.agents/skills,type=bind,consistency=cached",
   ],
   // Run as root inside the container so tests can run privileged tools like btrfs send/receive
   "remoteUser": "root",
   "postCreateCommand": "bash .devcontainer/init_volumes.bash",
-  "postStartCommand": "bash .devcontainer/mount_volumes.bash"
+  "postStartCommand": "bash .devcontainer/mount_volumes.bash",
+  "containerEnv": {
+    "RUST_LOG": "debug,h2=info,geoscribefs=trace",
+    "RUST_LOG_SPAN_EVENTS": "new",
+    "RUST_BACKTRACE": "0",
+  },
 }

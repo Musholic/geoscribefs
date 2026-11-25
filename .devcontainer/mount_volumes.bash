@@ -10,6 +10,15 @@ BTRFS_MOUNT_POINT="/var/lib/geoscribefs/btrfs"
 ZFS_IMG_PATH="/tmp/zfs.img"
 ZFS_POOL_NAME="zpool_geoscribefs"
 
+# Detach stale loop devices left over from previous container sessions.
+# Images in /tmp are recreated with a new inode on each init, so old
+# attachments point to deleted inodes and are invisible to `losetup -j`.
+# Devices still in use by a live mount will fail with EBUSY; ignore those.
+for dev in /dev/loop[0-9]*; do
+    [ -b "$dev" ] || continue
+    losetup -d "$dev" 2>/dev/null || true
+done
+
 echo "Mounting Btrfs subvolume ${BTRFS_SUBVOL_NAME}..."
 mkdir -p "$BTRFS_MOUNT_POINT"
 
