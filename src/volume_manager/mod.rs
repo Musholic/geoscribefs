@@ -52,7 +52,11 @@ pub trait VolumeManager: Send + Sync {
 
     fn receive_snapshot_process(&self) -> io::Result<Child>;
 
-    fn send_snapshot_process(&self, snapshot_date: &str, base_snapshot_date: Option<&str>) -> io::Result<Child>;
+    fn send_snapshot_process(
+        &self,
+        snapshot_date: &str,
+        base_snapshot_date: Option<&str>,
+    ) -> io::Result<Child>;
 
     fn volume_path(&self) -> PathBuf;
 

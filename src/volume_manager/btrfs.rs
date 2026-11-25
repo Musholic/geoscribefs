@@ -140,7 +140,11 @@ impl VolumeManager for BtrfsVolumeManager {
             .spawn()
     }
 
-    fn send_snapshot_process(&self, snapshot_date: &str, base_snapshot_date: Option<&str>) -> io::Result<Child> {
+    fn send_snapshot_process(
+        &self,
+        snapshot_date: &str,
+        base_snapshot_date: Option<&str>,
+    ) -> io::Result<Child> {
         let snapshot_path = get_snapshot_path(&self.snapshots_path, snapshot_date)?;
 
         let mut cmd = Command::new("btrfs");
