@@ -38,3 +38,14 @@ jobs:
         uses: devcontainers/ci@v0.3
         with:
           runCmd: cargo clippy --all-targets --all-features -- -D warnings
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run fmt check in Dev Container
+        uses: devcontainers/ci@v0.3
+        with:
+          runCmd: cargo fmt --all -- --check
